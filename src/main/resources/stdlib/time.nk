@@ -1,0 +1,336 @@
+import "core.nk"
+
+// 时间和随机数模块 - 提供时间处理、计时器和随机数生成
+
+// ============================================
+// 随机数生成器 (Random)
+// ============================================
+
+pub Random {
+    pri seed: Int
+    pri state: Int
+
+    pub setup(initialSeed?: Int = 0) {
+        if (initialSeed == 0) {
+            // 使用当前时间作为种子（简化实现）
+            this.seed = 123456789
+        } else {
+            this.seed = initialSeed
+        }
+        this.state = this.seed
+    }
+
+    // 线性同余生成器 (LCG)
+    pub next(): Int {
+        // a = 1103515245, c = 12345, m = 2^31
+        this.state = (this.state * 1103515245 + 12345) & 2147483647
+        return this.state
+    }
+
+    // 生成 [0, max) 范围内的随机数
+    pub nextInt(max: Int): Int {
+        if (max <= 0) return 0
+        return this.next() % max
+    }
+
+    // 生成 [min, max] 范围内的随机数
+    pub nextRange(min: Int, max: Int): Int {
+        if (min > max) {
+            temp: Int = min
+            min = max
+            max = temp
+        }
+        range: Int = max - min + 1
+        return min + (this.next() % range)
+    }
+
+    // 生成随机布尔值
+    pub nextBool(): Bool {
+        return (this.next() % 2) == 0
+    }
+
+    // 从列表中随机选择
+    pub choice(list: List): Any {
+        if (list.size == 0) {
+            return Err("Cannot choose from empty list")
+        }
+        idx: Int = this.nextInt(list.size)
+        return Ok(list[idx])
+    }
+
+    // 从列表中随机选择多个
+    pub choices(list: List, n: Int): List {
+        if (list.size == 0 || n <= 0) return List()
+        result: List = List()
+        i: Int = 0
+        loop {
+            if (i >= n) break
+            idx: Int = this.nextInt(list.size)
+            result.add(list[idx])
+            i += 1
+        }
+        return result
+    }
+
+    // 随机采样（不重复）
+    pub sample(list: List, n: Int): Any {
+        if (n > list.size) {
+            return Err("Sample size larger than list")
+        }
+        if (n <= 0) return Ok(List())
+
+        // Fisher-Yates 洗牌算法的部分应用
+        result: List = List()
+        i: Int = 0
+        loop {
+            if (i >= list.size) break
+            result.add(list[i])
+            i += 1
+        }
+
+        // 只洗牌前 n 个元素
+        i = result.size - 1
+        limit: Int = result.size - n
+        loop {
+            if (i < limit) break
+            j: Int = this.nextInt(i + 1)
+            temp: Any = result[i]
+            result[i] = result[j]
+            result[j] = temp
+            i -= 1
+        }
+
+        // 取前 n 个
+        sampled: List = List()
+        i = 0
+        loop {
+            if (i >= n) break
+            sampled.add(result[i])
+            i += 1
+        }
+        return Ok(sampled)
+    }
+
+    // 打乱列表（Fisher-Yates 洗牌）
+    pub shuffle(list: List): List {
+        result: List = List()
+        i: Int = 0
+        loop {
+            if (i >= list.size) break
+            result.add(list[i])
+            i += 1
+        }
+
+        i = result.size - 1
+        loop {
+            if (i <= 0) break
+            j: Int = this.nextInt(i + 1)
+            temp: Any = result[i]
+            result[i] = result[j]
+            result[j] = temp
+            i -= 1
+        }
+        return result
+    }
+
+    // 重置随机状态
+    pub reset() {
+        this.state = this.seed
+    }
+
+    // 设置新种子
+    pub reseed(newSeed: Int) {
+        this.seed = newSeed
+        this.state = newSeed
+    }
+}
+
+// ============================================
+// 计时器 (Timer)
+// ============================================
+
+pub Timer {
+    pri startTime: Int = 0
+    pri elapsed: Int = 0
+    pri running: Bool = false
+
+    pub setup() {}
+
+    pub start() {
+        this.startTime = currentTimeMillis()
+        this.running = true
+    }
+
+    pub stop(): Int {
+        if (!this.running) return this.elapsed
+        now: Int = currentTimeMillis()
+        this.elapsed = this.elapsed + (now - this.startTime)
+        this.running = false
+        return this.elapsed
+    }
+
+    pub reset() {
+        this.elapsed = 0
+        this.running = false
+    }
+
+    pub restart() {
+        this.reset()
+        this.start()
+    }
+
+    pub elapsed(): Int {
+        if (this.running) {
+            now: Int = currentTimeMillis()
+            return this.elapsed + (now - this.startTime)
+        }
+        return this.elapsed
+    }
+
+    pub isRunning(): Bool {
+        return this.running
+    }
+
+    pub lap(): Int {
+        if (!this.running) return 0
+        now: Int = currentTimeMillis()
+        lapTime: Int = now - this.startTime
+        this.elapsed = this.elapsed + lapTime
+        this.startTime = now
+        return lapTime
+    }
+}
+
+// ============================================
+// 时间计算工具
+// ============================================
+
+// 时间单位常量（毫秒）
+pub MS_PER_SECOND(): Int { return 1000 }
+pub MS_PER_MINUTE(): Int { return 60000 }
+pub MS_PER_HOUR(): Int { return 3600000 }
+pub MS_PER_DAY(): Int { return 86400000 }
+
+// 将毫秒转换为秒
+pub msToSeconds(ms: Int): Int {
+    return ms / 1000
+}
+
+// 将毫秒转换为分钟
+pub msToMinutes(ms: Int): Int {
+    return ms / 60000
+}
+
+// 将毫秒转换为小时
+pub msToHours(ms: Int): Int {
+    return ms / 3600000
+}
+
+// 将秒转换为毫秒
+pub secondsToMs(seconds: Int): Int {
+    return seconds * 1000
+}
+
+// 将分钟转换为毫秒
+pub minutesToMs(minutes: Int): Int {
+    return minutes * 60000
+}
+
+// 将小时转换为毫秒
+pub hoursToMs(hours: Int): Int {
+    return hours * 3600000
+}
+
+// 格式化时间间隔
+pub formatDuration(ms: Int): Str {
+    if (ms < 0) ms = -ms
+
+    hours: Int = ms / MS_PER_HOUR
+    ms = ms % MS_PER_HOUR
+
+    minutes: Int = ms / MS_PER_MINUTE
+    ms = ms % MS_PER_MINUTE
+
+    seconds: Int = ms / MS_PER_SECOND
+    ms = ms % MS_PER_SECOND
+
+    if (hours > 0) {
+        return padInt(hours) + ":" + padInt(minutes) + ":" + padInt(seconds)
+    } else if (minutes > 0) {
+        return padInt(minutes) + ":" + padInt(seconds)
+    } else {
+        return Str(seconds) + "." + padInt3(ms) + "s"
+    }
+}
+
+// 格式化时间为简洁形式
+pub formatDurationBrief(ms: Int): Str {
+    if (ms < 0) ms = -ms
+
+    if (ms < 1000) {
+        return Str(ms) + "ms"
+    } else if (ms < 60000) {
+        seconds: Int = ms / 1000
+        remMs: Int = ms % 1000
+        return Str(seconds) + "." + Str(remMs / 100) + "s"
+    } else if (ms < 3600000) {
+        minutes: Int = ms / 60000
+        seconds: Int = (ms % 60000) / 1000
+        return Str(minutes) + "m" + Str(seconds) + "s"
+    } else {
+        hours: Int = ms / 3600000
+        minutes: Int = (ms % 3600000) / 60000
+        return Str(hours) + "h" + Str(minutes) + "m"
+    }
+}
+
+// ============================================
+// 性能测量
+// ============================================
+
+pub benchmark(fn: Function, iterations?: Int = 1): Int {
+    timer: Timer = Timer()
+    timer.setup()
+    timer.start()
+
+    i: Int = 0
+    loop {
+        if (i >= iterations) break
+        fn()
+        i += 1
+    }
+
+    return timer.stop()
+}
+
+pub measure(fn: Function): Any {
+    timer: Timer = Timer()
+    timer.setup()
+    timer.start()
+
+    result = fn()
+
+    elapsed: Int = timer.stop()
+    return Pair(result, elapsed)
+}
+
+// ============================================
+// 私有辅助函数
+// ============================================
+
+pri currentTimeMillis(): Int {
+    // 这是一个原生函数占位符
+    // 实际实现应该由解释器提供
+    return 0
+}
+
+pri padInt(n: Int): Str {
+    if (n < 10) return "0" + Str(n)
+    return Str(n)
+}
+
+pri padInt3(n: Int): Str {
+    if (n < 10) return "00" + Str(n)
+    if (n < 100) return "0" + Str(n)
+    return Str(n)
+}

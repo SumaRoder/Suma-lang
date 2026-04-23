@@ -1,160 +1,486 @@
 pub Stack {
     pri data: List
-    
+
     pub setup() {
         this.data = List()
     }
-    
+
     pub push(item: Any) {
         this.data.add(item)
     }
-    
-    pub pop(): R<Any, Str> {
-        if (this.data.size == 0) {
+
+    pub pop(): Any {
+        if (this.isEmpty()) {
             return Err("Stack is empty")
         }
-        item: Any = this.data[this.data.size - 1]
+        idx: Int = this.data.size - 1
+        item: Any = this.data[idx]
+        this.data.removeAt(idx)
         return Ok(item)
     }
-    
-    pub peek(): R<Any, Str> {
-        if (this.data.size == 0) {
+
+    pub peek(): Any {
+        if (this.isEmpty()) {
             return Err("Stack is empty")
         }
         return Ok(this.data[this.data.size - 1])
     }
-    
+
     pub isEmpty(): Bool {
         return this.data.size == 0
     }
-    
+
     pub size(): Int {
         return this.data.size
     }
-    
+
     pub clear() {
         this.data = List()
+    }
+
+    pub toList(): List {
+        return copyList(this.data)
+    }
+
+    pub toStr(): Str {
+        return "Stack(" + this.data.toStr() + ")"
     }
 }
 
 pub Queue {
     pri data: List
-    
+
     pub setup() {
         this.data = List()
     }
-    
+
     pub enqueue(item: Any) {
         this.data.add(item)
     }
-    
-    pub dequeue(): R<Any, Str> {
-        if (this.data.size == 0) {
+
+    pub dequeue(): Any {
+        if (this.isEmpty()) {
             return Err("Queue is empty")
         }
         item: Any = this.data[0]
+        this.data.removeAt(0)
         return Ok(item)
     }
-    
-    pub peek(): R<Any, Str> {
-        if (this.data.size == 0) {
+
+    pub peek(): Any {
+        if (this.isEmpty()) {
             return Err("Queue is empty")
         }
         return Ok(this.data[0])
     }
-    
+
     pub isEmpty(): Bool {
         return this.data.size == 0
     }
-    
+
     pub size(): Int {
         return this.data.size
     }
-    
+
     pub clear() {
         this.data = List()
     }
+
+    pub toList(): List {
+        return copyList(this.data)
+    }
+
+    pub toStr(): Str {
+        return "Queue(" + this.data.toStr() + ")"
+    }
 }
 
-pub Counter {
-    pri count: Int = 0
-        .getter
-    pri step: Int = 1
-        .getter
-    
-    pub setup(step: Int) {
-        this.step = step
+pub Deque {
+    pri data: List
+
+    pub setup() {
+        this.data = List()
     }
-    
-    pub increment(): Int {
-        this.count += this.step
-        return this.count
+
+    pub pushFront(item: Any) {
+        // 在开头插入需要移动所有元素，暂时使用 add + reverse 模拟
+        this.data.add(item)
+        // 将新元素移动到开头
+        i: Int = this.data.size - 1
+        loop {
+            if (i <= 0) break
+            temp: Any = this.data[i]
+            this.data[i] = this.data[i - 1]
+            this.data[i - 1] = temp
+            i -= 1
+        }
     }
-    
-    pub decrement(): Int {
-        this.count -= this.step
-        return this.count
+
+    pub pushBack(item: Any) {
+        this.data.add(item)
     }
-    
-    pub reset() {
-        this.count = 0
+
+    pub popFront(): Any {
+        if (this.isEmpty()) {
+            return Err("Deque is empty")
+        }
+        item: Any = this.data[0]
+        this.data.removeAt(0)
+        return Ok(item)
     }
-    
-    pub set(n: Int) {
-        this.count = n
+
+    pub popBack(): Any {
+        if (this.isEmpty()) {
+            return Err("Deque is empty")
+        }
+        idx: Int = this.data.size - 1
+        item: Any = this.data[idx]
+        this.data.removeAt(idx)
+        return Ok(item)
+    }
+
+    pub peekFront(): Any {
+        if (this.isEmpty()) {
+            return Err("Deque is empty")
+        }
+        return Ok(this.data[0])
+    }
+
+    pub peekBack(): Any {
+        if (this.isEmpty()) {
+            return Err("Deque is empty")
+        }
+        return Ok(this.data[this.data.size - 1])
+    }
+
+    pub isEmpty(): Bool {
+        return this.data.size == 0
+    }
+
+    pub size(): Int {
+        return this.data.size
+    }
+
+    pub clear() {
+        this.data = List()
+    }
+
+    pub toList(): List {
+        return copyList(this.data)
+    }
+}
+
+pub HashMap {
+    pri keys: List
+    pri values: List
+
+    pub setup() {
+        this.keys = List()
+        this.values = List()
+    }
+
+    pub put(key: Any, value: Any) {
+        i: Int = findKeyIndex(this.keys, key)
+        if (i >= 0) {
+            this.values[i] = value
+        } else {
+            this.keys.add(key)
+            this.values.add(value)
+        }
+    }
+
+    pub get(key: Any): Any {
+        i: Int = findKeyIndex(this.keys, key)
+        if (i >= 0) {
+            return Ok(this.values[i])
+        }
+        return Err("Key not found: " + Str(key))
+    }
+
+    pub getOr(key: Any, default: Any): Any {
+        i: Int = findKeyIndex(this.keys, key)
+        if (i >= 0) {
+            return this.values[i]
+        }
+        return default
+    }
+
+    pub contains(key: Any): Bool {
+        return findKeyIndex(this.keys, key) >= 0
+    }
+
+    pub remove(key: Any): Bool {
+        i: Int = findKeyIndex(this.keys, key)
+        if (i >= 0) {
+            this.keys.removeAt(i)
+            this.values.removeAt(i)
+            return true
+        }
+        return false
+    }
+
+    pub size(): Int {
+        return this.keys.size
+    }
+
+    pub isEmpty(): Bool {
+        return this.keys.size == 0
+    }
+
+    pub clear() {
+        this.keys = List()
+        this.values = List()
+    }
+
+    pub keysList(): List {
+        return copyList(this.keys)
+    }
+
+    pub valuesList(): List {
+        return copyList(this.values)
+    }
+
+    pub entries(): List {
+        result: List = List()
+        i: Int = 0
+        loop {
+            if (i >= this.keys.size) break
+            result.add(List(this.keys[i], this.values[i]))
+            i += 1
+        }
+        return result
+    }
+
+    pub mapValues(fn: Function): HashMap {
+        result: HashMap = HashMap()
+        result.setup()
+        i: Int = 0
+        loop {
+            if (i >= this.keys.size) break
+            newValue: Any = fn(this.values[i])
+            result.put(this.keys[i], newValue)
+            i += 1
+        }
+        return result
+    }
+
+    pub filter(fn: Function): HashMap {
+        result: HashMap = HashMap()
+        result.setup()
+        i: Int = 0
+        loop {
+            if (i >= this.keys.size) break
+            if (fn(this.keys[i], this.values[i])) {
+                result.put(this.keys[i], this.values[i])
+            }
+            i += 1
+        }
+        return result
+    }
+
+    pub toStr(): Str {
+        entries: List = List()
+        i: Int = 0
+        loop {
+            if (i >= this.keys.size) break
+            entries.add(Str(this.keys[i]) + "=" + Str(this.values[i]))
+            i += 1
+        }
+        return "{" + join(entries, ", ") + "}"
     }
 }
 
 pub Set {
     pri data: List
-    
+
     pub setup() {
         this.data = List()
     }
-    
+
     pub add(item: Any) {
         if (!this.contains(item)) {
             this.data.add(item)
         }
     }
-    
+
     pub contains(item: Any): Bool {
-        i: Int = 0
-        loop {
-            if (i >= this.data.size) break
-            if (this.data[i] == item) {
-                return true
-            }
-            i += 1
-        }
-        return false
+        return findKeyIndex(this.data, item) >= 0
     }
-    
+
     pub remove(item: Any): Bool {
-        i: Int = 0
-        loop {
-            if (i >= this.data.size) break
-            if (this.data[i] == item) {
-                return true
-            }
-            i += 1
+        i: Int = findKeyIndex(this.data, item)
+        if (i >= 0) {
+            this.data.removeAt(i)
+            return true
         }
         return false
     }
-    
+
     pub size(): Int {
         return this.data.size
     }
-    
+
     pub isEmpty(): Bool {
         return this.data.size == 0
     }
-    
+
     pub toList(): List {
-        return this.data
+        return copyList(this.data)
     }
-    
+
     pub clear() {
         this.data = List()
     }
+
+    pub union(other: Set): Set {
+        result: Set = Set()
+        result.setup()
+        i: Int = 0
+        loop {
+            if (i >= this.data.size) break
+            result.add(this.data[i])
+            i += 1
+        }
+        i = 0
+        loop {
+            if (i >= other.data.size) break
+            result.add(other.data[i])
+            i += 1
+        }
+        return result
+    }
+
+    pub intersect(other: Set): Set {
+        result: Set = Set()
+        result.setup()
+        i: Int = 0
+        loop {
+            if (i >= this.data.size) break
+            item: Any = this.data[i]
+            if (other.contains(item)) {
+                result.add(item)
+            }
+            i += 1
+        }
+        return result
+    }
+
+    pub difference(other: Set): Set {
+        result: Set = Set()
+        result.setup()
+        i: Int = 0
+        loop {
+            if (i >= this.data.size) break
+            item: Any = this.data[i]
+            if (!other.contains(item)) {
+                result.add(item)
+            }
+            i += 1
+        }
+        return result
+    }
+
+    pub isSubset(other: Set): Bool {
+        i: Int = 0
+        loop {
+            if (i >= this.data.size) break
+            if (!other.contains(this.data[i])) return false
+            i += 1
+        }
+        return true
+    }
+
+    pub isSuperset(other: Set): Bool {
+        return other.isSubset(this)
+    }
+
+    pub toStr(): Str {
+        return "Set(" + this.data.toStr() + ")"
+    }
+}
+
+pub PriorityQueue {
+    pri items: List
+    pri priorities: List
+
+    pub setup() {
+        this.items = List()
+        this.priorities = List()
+    }
+
+    pub enqueue(item: Any, priority: Int) {
+        i: Int = 0
+        loop {
+            if (i >= this.priorities.size) break
+            if (priority < this.priorities[i]) break
+            i += 1
+        }
+        this.items.insert(i, item)
+        this.priorities.insert(i, priority)
+    }
+
+    pub dequeue(): Any {
+        if (this.isEmpty()) {
+            return Err("PriorityQueue is empty")
+        }
+        item: Any = this.items[0]
+        this.items.removeAt(0)
+        this.priorities.removeAt(0)
+        return Ok(item)
+    }
+
+    pub peek(): Any {
+        if (this.isEmpty()) {
+            return Err("PriorityQueue is empty")
+        }
+        return Ok(this.items[0])
+    }
+
+    pub isEmpty(): Bool {
+        return this.items.size == 0
+    }
+
+    pub size(): Int {
+        return this.items.size
+    }
+
+    pub clear() {
+        this.items = List()
+        this.priorities = List()
+    }
+}
+
+pri findKeyIndex(keys: List, key: Any): Int {
+    i: Int = 0
+    loop {
+        if (i >= keys.size) break
+        if (keys[i] == key) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+pri copyList(list: List): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pri join(list: List, sep: Str): Str {
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (i > 0) result = result + sep
+        result = result + Str(list[i])
+        i += 1
+    }
+    return result
 }

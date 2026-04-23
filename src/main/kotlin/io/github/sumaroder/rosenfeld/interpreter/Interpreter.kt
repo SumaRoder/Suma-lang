@@ -112,6 +112,10 @@ class Interpreter {
             is BreakStmt -> throw BreakException()
             is ContinueStmt -> throw ContinueException()
             is VarDecl -> executeDeclaration(stmt)
+            is VarStmt -> {
+                val value = evaluate(stmt.initializer)
+                environment.define(stmt.name, value)
+            }
             else -> throw RuntimeException("Unknown statement type: ${stmt.javaClass}")
         }
     }
@@ -163,17 +167,55 @@ class Interpreter {
     }
 
     private fun evaluateBinary(expr: BinaryExpr): RosenfeldValue {
-        val left = evaluate(expr.left)
-
         if (expr.operator == BinaryOp.ANDL) {
+            val left = evaluate(expr.left)
             return if (left.isTruthy()) evaluate(expr.right) else left
         }
         if (expr.operator == BinaryOp.ORL) {
+            val left = evaluate(expr.left)
             return if (left.isTruthy()) left else evaluate(expr.right)
         }
-
+        
+        if (expr.operator == BinaryOp.ASSIGN) {
+            val right = evaluate(expr.right)
+            return when (val l = expr.left) {
+                is Identifier -> {
+                    if (!environment.contains(l.name)) {
+                        environment.define(l.name, right)
+                    } else {
+                        environment.assign(l.name, right)
+                    }
+                    right
+                }
+                is MemberExpr -> {
+                    val obj = evaluate(l.obj)
+                    if (obj is InstanceValue) {
+                        obj.set(l.property, right, this)
+                        right
+                    } else throw RuntimeException("Cannot assign to member of ${obj.typeName()}")
+                }
+                is IndexExpr -> {
+                    val obj = evaluate(l.obj)
+                    val index = evaluate(l.index)
+                    when {
+                        obj is ListValue && index is IntValue -> {
+                            val i = index.value.toInt()
+                            if (i < 0 || i >= obj.elements.size) {
+                                throw RuntimeException("Index out of bounds: $i")
+                            }
+                            obj.elements[i] = right
+                            right
+                        }
+                        else -> throw RuntimeException("Cannot index ${obj.typeName()} with ${index.typeName()}")
+                    }
+                }
+                else -> throw RuntimeException("Invalid assignment target")
+            }
+        }
+        
+        val left = evaluate(expr.left)
         val right = evaluate(expr.right)
-
+        
         return when (expr.operator) {
             BinaryOp.ADD -> when {
                 left is IntValue && right is IntValue -> IntValue(left.value + right.value)
@@ -185,9 +227,15 @@ class Interpreter {
             }
             BinaryOp.MINUS -> numericOp(left, right, "subtract") { a, b -> a - b }
             BinaryOp.MULT -> numericOp(left, right, "multiply") { a, b -> a * b }
-            BinaryOp.DIV -> numericOp(left, right, "divide") { a, b ->
-                if (b == 0.0) throw RuntimeException("Division by zero")
-                a / b
+            BinaryOp.DIV -> when {
+                left is IntValue && right is IntValue -> {
+                    if (right.value == 0L) throw RuntimeException("Division by zero")
+                    IntValue(left.value / right.value)
+                }
+                else -> numericOp(left, right, "divide") { a, b -> 
+                    if (b == 0.0) throw RuntimeException("Division by zero")
+                    a / b 
+                }
             }
             BinaryOp.REM -> numericOp(left, right, "modulo") { a, b -> a % b }
             BinaryOp.ANDB -> IntValue(toInt(left) and toInt(right))
@@ -201,22 +249,6 @@ class Interpreter {
             BinaryOp.LE -> BoolValue(compareValues(left, right) <= 0)
             BinaryOp.EQ -> BoolValue(isEqual(left, right))
             BinaryOp.NE -> BoolValue(!isEqual(left, right))
-            BinaryOp.ASSIGN -> {
-                when (val l = expr.left) {
-                    is Identifier -> {
-                        environment.assign(l.name, right)
-                        right
-                    }
-                    is MemberExpr -> {
-                        val obj = evaluate(l.obj)
-                        if (obj is InstanceValue) {
-                            obj.set(l.property, right, this)
-                            right
-                        } else throw RuntimeException("Cannot assign to member of ${obj.typeName()}")
-                    }
-                    else -> throw RuntimeException("Invalid assignment target")
-                }
-            }
             else -> throw RuntimeException("Unknown binary operator: ${expr.operator}")
         }
     }
@@ -270,6 +302,8 @@ class Interpreter {
             left is NullValue || right is NullValue -> false
             left is IntValue && right is IntValue -> left.value == right.value
             left is FloatValue && right is FloatValue -> left.value == right.value
+            left is IntValue && right is FloatValue -> left.value.toDouble() == right.value
+            left is FloatValue && right is IntValue -> left.value == right.value.toDouble()
             left is StringValue && right is StringValue -> left.value == right.value
             left is BoolValue && right is BoolValue -> left.value == right.value
             else -> left == right
@@ -343,7 +377,13 @@ class Interpreter {
             is StringValue -> when (expr.property) {
                 "size" -> IntValue(obj.value.length.toLong())
                 "isEmpty" -> BoolValue(obj.value.isEmpty())
-                else -> throw RuntimeException("String has no property '${expr.property}'")
+                else -> {
+                    obj.getMethod(expr.property)?.let { method ->
+                        NativeFunction(method.name, method.arity) { interpreter, args ->
+                            method.impl(interpreter, obj, args)
+                        }
+                    } ?: throw RuntimeException("String has no property or method '${expr.property}'")
+                }
             }
             is ListValue -> when (expr.property) {
                 "size" -> IntValue(obj.elements.size.toLong())
@@ -352,7 +392,13 @@ class Interpreter {
                     obj.elements.add(args[0])
                     NullValue
                 }
-                else -> throw RuntimeException("List has no property '${expr.property}'")
+                else -> {
+                    obj.getMethod(expr.property)?.let { method ->
+                        NativeFunction(method.name, method.arity) { interpreter, args ->
+                            method.impl(interpreter, obj, args)
+                        }
+                    } ?: throw RuntimeException("List has no property or method '${expr.property}'")
+                }
             }
             is ResultValue -> when (expr.property) {
                 "mustOk" -> NativeFunction("mustOk") { _, args ->
@@ -491,7 +537,7 @@ class Interpreter {
     }
 
     private fun defineNativeFunctions() {
-        globals.define("print", NativeFunction("print") { _, args ->
+        globals.define("print", NativeFunction("print") { interpreter, args ->
             val output = args.joinToString(" ") { it.toDisplayString() }
             println(output)
             NullValue

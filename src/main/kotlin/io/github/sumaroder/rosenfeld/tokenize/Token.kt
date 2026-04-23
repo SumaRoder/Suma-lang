@@ -1,7 +1,7 @@
 package io.github.sumaroder.rosenfeld.tokenize
 
 data class TokenInfo(val file: String?, val line: Int, val column: Int) {
-    override fun toString(): String = "$file:$line:$column"
+    override fun toString(): String = if (file != null) "$file:$line:$column" else "$line:$column"
 }
 
 enum class TokenType {

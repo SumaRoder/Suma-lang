@@ -1,86 +1,581 @@
-pub ListExt {
-    pub map(list: List, fn: Function): List {
-        result: List = List()
-        i: Int = 0
-        loop {
-            if (i >= list.size) break
-            item = list[i]
-            result.add(fn(item))
-            i += 1
-        }
-        return result
+pub take(list: List, n: Int): List {
+    if (n <= 0) return List()
+    result: List = List()
+    count: Int = n
+    if (n > list.size) {
+        count = list.size
     }
-    
-    pub filter(list: List, fn: Function): List {
-        result: List = List()
-        i: Int = 0
-        loop {
-            if (i >= list.size) break
-            item = list[i]
-            if (fn(item)) {
-                result.add(item)
+    i: Int = 0
+    loop {
+        if (i >= count) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub drop(list: List, n: Int): List {
+    if (n <= 0) return list
+    if (n >= list.size) return List()
+    result: List = List()
+    i: Int = n
+    loop {
+        if (i >= list.size) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub takeWhile(list: List, pred: Function): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (!pred(list[i])) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub dropWhile(list: List, pred: Function): List {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (!pred(list[i])) break
+        i += 1
+    }
+    return drop(list, i)
+}
+
+pub slice(list: List, start: Int, end?: Int = -1): List {
+    s: Int = start
+    if (start < 0) { s = 0 }
+    e: Int = end
+    if (end < 0) { e = list.size }
+    if (end > list.size) { e = list.size }
+    if (s >= e) return List()
+    result: List = List()
+    i: Int = s
+    loop {
+        if (i >= e) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub chunks(list: List, size: Int): List {
+    if (size <= 0) return List()
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        chunk: List = slice(list, i, i + size)
+        result.add(chunk)
+        i += size
+    }
+    return result
+}
+
+pub reverse(list: List): List {
+    result: List = List()
+    i: Int = list.size - 1
+    loop {
+        if (i < 0) break
+        result.add(list[i])
+        i -= 1
+    }
+    return result
+}
+
+pub distinct(list: List): List {
+    result: List = List()
+    seen: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        item = list[i]
+        if (!contains(seen, item)) {
+            result.add(item)
+            seen.add(item)
+        }
+        i += 1
+    }
+    return result
+}
+
+pub flatten(list: List): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        item = list[i]
+        if (isList(item)) {
+            j: Int = 0
+            loop {
+                if (j >= item.size) break
+                result.add(item[j])
+                j += 1
             }
-            i += 1
+        } else {
+            result.add(item)
         }
-        return result
+        i += 1
     }
-    
-    pub reduce(list: List, fn: Function, init: Any): Any {
-        acc = init
-        i: Int = 0
+    return result
+}
+
+pub flatMap(list: List, fn: Function): List {
+    return flatten(map(list, fn))
+}
+
+pub intersperse(list: List, sep: Any): List {
+    if (list.size == 0) return List()
+    result: List = List()
+    result.add(list[0])
+    i: Int = 1
+    loop {
+        if (i >= list.size) break
+        result.add(sep)
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub repeat(item: Any, n: Int): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= n) break
+        result.add(item)
+        i += 1
+    }
+    return result
+}
+
+pub range(start: Int, end: Int, step?: Int = 1): List {
+    result: List = List()
+    if (step > 0) {
+        i: Int = start
         loop {
-            if (i >= list.size) break
-            item = list[i]
-            acc = fn(acc, item)
-            i += 1
+            if (i >= end) break
+            result.add(i)
+            i += step
         }
-        return acc
-    }
-    
-    pub find(list: List, fn: Function): R<Any, Str> {
-        i: Int = 0
+    } else if (step < 0) {
+        i: Int = start
         loop {
-            if (i >= list.size) break
-            item = list[i]
-            if (fn(item)) {
-                return Ok(item)
-            }
-            i += 1
+            if (i <= end) break
+            result.add(i)
+            i += step
         }
-        return Err("Not found")
     }
-    
-    pub contains(list: List, value: Any): Bool {
-        i: Int = 0
-        loop {
-            if (i >= list.size) break
-            if (list[i] == value) {
-                return true
-            }
-            i += 1
-        }
-        return false
+    return result
+}
+
+pub map(list: List, fn: Function): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        result.add(fn(list[i]))
+        i += 1
     }
-    
-    pub sum(list: List): Int {
-        total: Int = 0
-        i: Int = 0
-        loop {
-            if (i >= list.size) break
-            total += list[i]
-            i += 1
-        }
-        return total
-    }
-    
-    pub reverse(list: List): List {
-        result: List = List()
-        i: Int = list.size - 1
-        loop {
-            if (i < 0) break
+    return result
+}
+
+pub filter(list: List, pred: Function): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) {
             result.add(list[i])
-            i -= 1
         }
-        return result
+        i += 1
     }
+    return result
+}
+
+pub reduce(list: List, fn: Function, initial: Any): Any {
+    result = initial
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        result = fn(result, list[i])
+        i += 1
+    }
+    return result
+}
+
+pub foldLeft(list: List, fn: Function, initial: Any): Any {
+    return reduce(list, fn, initial)
+}
+
+pub foldRight(list: List, fn: Function, initial: Any): Any {
+    result = initial
+    i: Int = list.size - 1
+    loop {
+        if (i < 0) break
+        result = fn(list[i], result)
+        i -= 1
+    }
+    return result
+}
+
+pub forEach(list: List, fn: Function) {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        fn(list[i])
+        i += 1
+    }
+}
+
+pub find(list: List, pred: Function): Any {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) {
+            return Ok(list[i])
+        }
+        i += 1
+    }
+    return Err("No element satisfies predicate")
+}
+
+pub findIndex(list: List, pred: Function): Int {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+pub all(list: List, pred: Function): Bool {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (!pred(list[i])) return false
+        i += 1
+    }
+    return true
+}
+
+pub any(list: List, pred: Function): Bool {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) return true
+        i += 1
+    }
+    return false
+}
+
+pub none(list: List, pred: Function): Bool {
+    return !any(list, pred)
+}
+
+pub count(list: List, pred: Function): Int {
+    cnt: Int = 0
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) cnt += 1
+        i += 1
+    }
+    return cnt
+}
+
+pub partition(list: List, pred: Function): List {
+    trueList: List = List()
+    falseList: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (pred(list[i])) {
+            trueList.add(list[i])
+        } else {
+            falseList.add(list[i])
+        }
+        i += 1
+    }
+    return List(trueList, falseList)
+}
+
+pub groupBy(list: List, fn: Function): Any {
+    result: List = List()
+    keys: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        item = list[i]
+        key = fn(item)
+        found: Bool = false
+        j: Int = 0
+        loop {
+            if (j >= keys.size) break
+            if (keys[j] == key) {
+                group: List = result[j]
+                group.add(item)
+                found = true
+                break
+            }
+            j += 1
+        }
+        if (!found) {
+            keys.add(key)
+            newGroup: List = List()
+            newGroup.add(item)
+            result.add(newGroup)
+        }
+        i += 1
+    }
+    return result
+}
+
+pub contains(list: List, value: Any): Bool {
+    return indexOf(list, value) >= 0
+}
+
+pub indexOf(list: List, value: Any): Int {
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (list[i] == value) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+pub lastIndexOf(list: List, value: Any): Int {
+    i: Int = list.size - 1
+    loop {
+        if (i < 0) break
+        if (list[i] == value) {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+pub first(list: List): Any {
+    if (list.size == 0) {
+        return Err("List is empty")
+    }
+    return Ok(list[0])
+}
+
+pub last(list: List): Any {
+    if (list.size == 0) {
+        return Err("List is empty")
+    }
+    return Ok(list[list.size - 1])
+}
+
+pub nth(list: List, n: Int): Any {
+    if (n < 0 || n >= list.size) {
+        return Err("Index out of bounds")
+    }
+    return Ok(list[n])
+}
+
+pub sort(list: List): List {
+    if (list.size <= 1) return list
+    result: List = copy(list)
+    i: Int = 0
+    loop {
+        if (i >= result.size - 1) break
+        minIdx: Int = i
+        j: Int = i + 1
+        loop {
+            if (j >= result.size) break
+            if (result[j] < result[minIdx]) {
+                minIdx = j
+            }
+            j += 1
+        }
+        if (minIdx != i) {
+            temp = result[i]
+            result[i] = result[minIdx]
+            result[minIdx] = temp
+        }
+        i += 1
+    }
+    return result
+}
+
+pub sortBy(list: List, fn: Function): List {
+    if (list.size <= 1) return list
+    result: List = copy(list)
+    keys: List = map(list, fn)
+    i: Int = 0
+    loop {
+        if (i >= result.size - 1) break
+        minIdx: Int = i
+        j: Int = i + 1
+        loop {
+            if (j >= result.size) break
+            if (keys[j] < keys[minIdx]) {
+                minIdx = j
+            }
+            j += 1
+        }
+        if (minIdx != i) {
+            temp = result[i]
+            result[i] = result[minIdx]
+            result[minIdx] = temp
+            tempKey = keys[i]
+            keys[i] = keys[minIdx]
+            keys[minIdx] = tempKey
+        }
+        i += 1
+    }
+    return result
+}
+
+pub reverseSorted(list: List): List {
+    return reverse(sort(list))
+}
+
+pub zip(list1: List, list2: List): List {
+    result: List = List()
+    len: Int = list1.size
+    if (list2.size < len) { len = list2.size }
+    i: Int = 0
+    loop {
+        if (i >= len) break
+        pair: List = List(list1[i], list2[i])
+        result.add(pair)
+        i += 1
+    }
+    return result
+}
+
+pub zipWith(list1: List, list2: List, fn: Function): List {
+    result: List = List()
+    len: Int = list1.size
+    if (list2.size < len) { len = list2.size }
+    i: Int = 0
+    loop {
+        if (i >= len) break
+        result.add(fn(list1[i], list2[i]))
+        i += 1
+    }
+    return result
+}
+
+pub unzip(list: List): List {
+    list1: List = List()
+    list2: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        pair: List = list[i]
+        list1.add(pair[0])
+        list2.add(pair[1])
+        i += 1
+    }
+    return List(list1, list2)
+}
+
+pub concat(list1: List, list2: List): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list1.size) break
+        result.add(list1[i])
+        i += 1
+    }
+    i = 0
+    loop {
+        if (i >= list2.size) break
+        result.add(list2[i])
+        i += 1
+    }
+    return result
+}
+
+pub join(list: List, sep?: Str = ","): Str {
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        if (i > 0) {
+            result = result + sep
+        }
+        result = result + Str(list[i])
+        i += 1
+    }
+    return result
+}
+pub joinToString(list: List, sep?: Str = ", ", prefix?: Str = "", suffix?: Str = ""): Str {
+    result: Str = prefix
+    result = result + join(list, sep)
+    result = result + suffix
+    return result
+}
+
+pub isList(value: Any): Bool {
+    return value -> {
+        List = true
+        _ = false
+    }
+}
+
+pub copy(list: List): List {
+    result: List = List()
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        result.add(list[i])
+        i += 1
+    }
+    return result
+}
+
+pub fill(item: Any, n: Int): List {
+    return repeat(item, n)
+}
+
+pub isEmpty(list: List): Bool {
+    return list.size == 0
+}
+
+pub isNotEmpty(list: List): Bool {
+    return list.size > 0
+}
+
+pub size(list: List): Int {
+    return list.size
+}
+
+pub clear(list: List) {
+    loop {
+        if (list.size == 0) break
+        list.removeAt(list.size - 1)
+    }
+}
+
+pub head(list: List): Any {
+    return first(list)
+}
+
+pub tail(list: List): List {
+    return drop(list, 1)
+}
+
+pub initList(list: List): List {
+    if (list.size <= 1) return List()
+    return slice(list, 0, list.size - 1)
 }

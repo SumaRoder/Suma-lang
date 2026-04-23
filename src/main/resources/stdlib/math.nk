@@ -1,5 +1,13 @@
+pub idiv(a: Int, b: Int): Int {
+    result: Int = a / b
+    return result
+}
+
 pub abs(n: Int): Int {
-    if (n < 0) return -n
+    if (n < 0) {
+        if (n == -2147483648) return 2147483647
+        return -n
+    }
     return n
 }
 
@@ -13,42 +21,130 @@ pub min(a: Int, b: Int): Int {
     return b
 }
 
-pub pow(base: Int, exp: Int): Int {
-    result: Int = 1
-    i: Int = 0
-    loop {
-        if (i >= exp) break
-        result = result * base
-        i += 1
-    }
-    return result
-}
-
 pub clamp(n: Int, low: Int, high: Int): Int {
     if (n < low) return low
     if (n > high) return high
     return n
 }
 
-pub sqrt(n: Int): Int {
-    if (n <= 0) return 0
-    if (n == 1) return 1
-    guess: Int = n / 2
-    i: Int = 0
-    loop {
-        if (i >= 20) break
-        newGuess: Int = (guess + n / guess) / 2
-        if (newGuess == guess) break
-        guess = newGuess
-        i += 1
-    }
-    return guess
-}
-
 pub sign(n: Int): Int {
     if (n > 0) return 1
     if (n < 0) return -1
     return 0
+}
+
+pub isEven(n: Int): Bool {
+    return n % 2 == 0
+}
+
+pub isOdd(n: Int): Bool {
+    return n % 2 != 0
+}
+
+pub isPositive(n: Int): Bool {
+    return n > 0
+}
+
+pub isNegative(n: Int): Bool {
+    return n < 0
+}
+
+pub isZero(n: Int): Bool {
+    return n == 0
+}
+
+pub pow(base: Int, exp: Int): Int {
+    if (exp < 0) return 0
+    if (exp == 0) return 1
+    if (base == 0) return 0
+    if (base == 1) return 1
+
+    result: Int = 1
+    b: Int = base
+    e: Int = exp
+
+    loop {
+        if (e == 0) break
+        if (e % 2 == 1) {
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    return result
+}
+
+pub sqrt(n: Int): Int {
+    if (n < 0) return 0
+    if (n <= 1) return n
+
+    x: Int = n
+    y: Int = (x + 1) / 2
+
+    loop {
+        if (y >= x) break
+        x = y
+        y = (x + n / x) / 2
+    }
+    return x
+}
+
+pub cbrt(n: Int): Int {
+    if (n == 0) return 0
+
+    neg: Bool = n < 0
+    x: Int = abs(n)
+
+    guess: Int = 1
+    while (guess * guess * guess < x) {
+        guess = guess * 2
+    }
+
+    low: Int = guess / 2
+    high: Int = guess
+
+    loop {
+        if (low > high) break
+        mid: Int = (low + high) / 2
+        cube: Int = mid * mid * mid
+
+        if (cube == x) {
+            if (neg) return -mid
+            return mid
+        }
+        if (cube < x) {
+            low = mid + 1
+        } else {
+            high = mid - 1
+        }
+    }
+
+    if (neg) return -high
+    return high
+}
+
+pub log2(n: Int): Int {
+    if (n <= 0) return 0
+    result: Int = 0
+    x: Int = n
+    loop {
+        if (x <= 1) break
+        x = x / 2
+        result += 1
+    }
+    return result
+}
+
+pub log10(n: Int): Int {
+    if (n <= 0) return 0
+    result: Int = 0
+    x: Int = n
+    loop {
+        if (x < 10) break
+        x = x / 10
+        result += 1
+    }
+    return result
 }
 
 pub gcd(a: Int, b: Int): Int {
@@ -64,7 +160,108 @@ pub gcd(a: Int, b: Int): Int {
 }
 
 pub lcm(a: Int, b: Int): Int {
-    return abs(a * b) / gcd(a, b)
+    if (a == 0 || b == 0) return 0
+    return abs(a / gcd(a, b) * b)
+}
+
+pub isPrime(n: Int): Bool {
+    if (n < 2) return false
+    if (n == 2) return true
+    if (n % 2 == 0) return false
+    if (n % 3 == 0) return n == 3
+
+    i: Int = 5
+    step: Int = 2
+    loop {
+        if (i * i > n) break
+        if (n % i == 0) return false
+        i += step
+        step = 6 - step
+    }
+    return true
+}
+
+pub nextPrime(n: Int): Int {
+    if (n < 2) return 2
+    candidate: Int = n + 1
+    loop {
+        if (isPrime(candidate)) return candidate
+        candidate += 1
+    }
+}
+
+pub prevPrime(n: Int): Int {
+    if (n <= 2) return 0
+    candidate: Int = n - 1
+    loop {
+        if (candidate < 2) return 0
+        if (isPrime(candidate)) return candidate
+        candidate -= 1
+    }
+}
+
+pub factorial(n: Int): Int {
+    if (n < 0) return 0
+    if (n == 0 || n == 1) return 1
+
+    result: Int = 1
+    i: Int = 2
+    loop {
+        if (i > n) break
+        result = result * i
+        i += 1
+    }
+    return result
+}
+
+pub fibonacci(n: Int): Int {
+    if (n < 0) return 0
+    if (n == 0) return 0
+    if (n == 1) return 1
+
+    a: Int = 0
+    b: Int = 1
+    i: Int = 2
+    loop {
+        if (i > n) break
+        temp: Int = a + b
+        a = b
+        b = temp
+        i += 1
+    }
+    return b
+}
+
+pub maxInList(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot find max of empty list")
+    }
+    m: Int = list[0]
+    i: Int = 1
+    loop {
+        if (i >= list.size) break
+        if (list[i] > m) {
+            m = list[i]
+        }
+        i += 1
+    }
+    return Ok(m)
+}
+
+pub minInList(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot find min of empty list")
+    }
+    m: Int = list[0]
+    i: Int = 1
+    loop {
+        if (i >= list.size) break
+        if (list[i] < m) {
+            m = list[i]
+        }
+        i += 1
+    }
+    return Ok(m)
 }
 
 pub sum(list: List): Int {
@@ -72,7 +269,7 @@ pub sum(list: List): Int {
     i: Int = 0
     loop {
         if (i >= list.size) break
-        total += list[i]
+        total = total + list[i]
         i += 1
     }
     return total
@@ -83,8 +280,168 @@ pub product(list: List): Int {
     i: Int = 0
     loop {
         if (i >= list.size) break
-        total *= list[i]
+        total = total * list[i]
         i += 1
     }
     return total
+}
+
+pub average(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot calculate average of empty list")
+    }
+    return Ok(sum(list) / list.size)
+}
+
+pub median(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot find median of empty list")
+    }
+    sorted: List = list.sort()
+    size: Int = sorted.size
+    mid: Int = size / 2
+
+    if (size % 2 == 1) {
+        return Ok(sorted[mid])
+    } else {
+        return Ok((sorted[mid - 1] + sorted[mid]) / 2)
+    }
+}
+
+pub mode(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot find mode of empty list")
+    }
+
+    maxCount: Int = 0
+    modeVal = null
+
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        current = list[i]
+        count: Int = 0
+
+        j: Int = 0
+        loop {
+            if (j >= list.size) break
+            if (list[j] == current) {
+                count += 1
+            }
+            j += 1
+        }
+
+        if (count > maxCount) {
+            maxCount = count
+            modeVal = current
+        }
+        i += 1
+    }
+
+    return Ok(modeVal)
+}
+
+pub variance(list: List): Any {
+    if (list.size == 0) {
+        return Err("Cannot calculate variance of empty list")
+    }
+    avg: Int = unwrap(average(list))
+    sumSquaredDiff: Int = 0
+
+    i: Int = 0
+    loop {
+        if (i >= list.size) break
+        diff: Int = list[i] - avg
+        sumSquaredDiff = sumSquaredDiff + diff * diff
+        i += 1
+    }
+    return Ok(sumSquaredDiff / list.size)
+}
+
+
+pub PI(): Int { return 314159265 }
+pub E(): Int { return 271828182 }
+pub PHI(): Int { return 161803399 }
+
+pub degToRad(deg: Int): Int {
+    return deg * 314159265 / 180000000
+}
+
+pub radToDeg(rad: Int): Int {
+    return rad * 180000000 / 314159265
+}
+
+pub sin(x: Int): Int {
+    pi2: Int = 628318530
+    x = x % pi2
+    if (x < 0) x = x + pi2
+
+    pi: Int = 314159265
+    neg: Bool = false
+
+    if (x > pi) {
+        x = x - pi
+        neg = true
+    }
+    if (x > pi / 2) {
+        x = pi - x
+    }
+
+    result: Int = x
+    x2: Int = (x * x) / 100000000
+    x3: Int = (x2 * x) / 100000000
+    x5: Int = (x3 * x2) / 100000000
+    x7: Int = (x5 * x2) / 100000000
+
+    result = result - x3 / 6
+    result = result + x5 / 120
+    result = result - x7 / 5040
+
+    if (neg) result = -result
+    return result
+}
+
+pub cos(x: Int): Int {
+    return sin(x + 157079632)
+}
+
+pub digits(n: Int): Int {
+    if (n == 0) return 1
+    count: Int = 0
+    x: Int = abs(n)
+    loop {
+        if (x == 0) break
+        x = x / 10
+        count += 1
+    }
+    return count
+}
+
+pub reverseDigits(n: Int): Int {
+    if (n == 0) return 0
+    neg: Bool = n < 0
+    x: Int = abs(n)
+    result: Int = 0
+    loop {
+        if (x == 0) break
+        result = result * 10 + (x % 10)
+        x = x / 10
+    }
+    if (neg) return -result
+    return result
+}
+
+pub isPalindrome(n: Int): Bool {
+    return n == reverseDigits(n)
+}
+
+pub digitSum(n: Int): Int {
+    sum: Int = 0
+    x: Int = abs(n)
+    loop {
+        if (x == 0) break
+        sum = sum + (x % 10)
+        x = x / 10
+    }
+    return sum
 }

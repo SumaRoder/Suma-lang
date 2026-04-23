@@ -142,6 +142,13 @@ data class VarDecl(
     override val info: TokenInfo
 ) : Decl
 
+data class VarStmt(
+    val name: String,
+    val typeAnnotation: String?,
+    val initializer: Expr,
+    override val info: TokenInfo
+) : Stmt
+
 data class ReturnStmt(
     val value: Expr?,
     override val info: TokenInfo

@@ -1,0 +1,499 @@
+pub padLeft(s: Str, width: Int, pad?: Str = " "): Str {
+    if (s.size >= width) return s
+    padCount: Int = width - s.size
+    padLen: Int = pad.size
+    if (padLen == 0) return s
+
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= padCount) break
+        result = result + pad[i % padLen]
+        i += 1
+    }
+    return result + s
+}
+
+pub padRight(s: Str, width: Int, pad?: Str = " "): Str {
+    if (s.size >= width) return s
+    padCount: Int = width - s.size
+    padLen: Int = pad.size
+    if (padLen == 0) return s
+
+    result: Str = s
+    i: Int = 0
+    loop {
+        if (i >= padCount) break
+        result = result + pad[i % padLen]
+        i += 1
+    }
+    return result
+}
+
+pub padCenter(s: Str, width: Int, pad?: Str = " "): Str {
+    if (s.size >= width) return s
+    totalPad: Int = width - s.size
+    leftPad: Int = totalPad / 2
+    rightPad: Int = totalPad - leftPad
+
+    padLen: Int = pad.size
+    if (padLen == 0) return s
+
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= leftPad) break
+        result = result + pad[i % padLen]
+        i += 1
+    }
+    result = result + s
+    i = 0
+    loop {
+        if (i >= rightPad) break
+        result = result + pad[i % padLen]
+        i += 1
+    }
+    return result
+}
+
+pub pad(s: Str, width: Int, align?: Str = "left", padChar?: Str = " "): Str {
+    if (align == "left") return padRight(s, width, padChar)
+    if (align == "right") return padLeft(s, width, padChar)
+    if (align == "center") return padCenter(s, width, padChar)
+    return s
+}
+
+pub intToStr(n: Int, width?: Int = 0, padZero?: Bool = true): Str {
+    neg: Bool = n < 0
+    s: Str = Str(abs(n))
+    if (width > 0 && s.size < width) {
+        padChar: Str = "0"
+        if (!padZero) { padChar = " " }
+        if (neg) {
+            return "-" + padLeft(s, width - 1, padChar)
+        }
+        return padLeft(s, width, padChar)
+    }
+    if (neg) return "-" + s
+    return s
+}
+
+pub intToStrSigned(n: Int, width?: Int = 0): Str {
+    sign: Str = "-"
+    if (n >= 0) { sign = "+" }
+    newWidth: Int = 0
+    if (width > 0) { newWidth = width - 1 }
+    return sign + intToStr(abs(n), newWidth)
+}
+
+pub intWithCommas(n: Int): Str {
+    if (n == 0) return "0"
+    neg: Bool = n < 0
+    s: Str = Str(abs(n))
+    result: Str = ""
+    i: Int = s.size - 1
+    count: Int = 0
+    loop {
+        if (i < 0) break
+        result = s[i] + result
+        count += 1
+        if (count % 3 == 0 && i > 0) {
+            result = "," + result
+        }
+        i -= 1
+    }
+    if (neg) return "-" + result
+    return result
+}
+
+pub formatPercent(n: Int, decimals?: Int = 0): Str {
+    if (decimals == 0) return Str(n) + "%"
+
+    factor: Int = pow10(decimals)
+    intPart: Int = n
+    fracPart: Int = 0
+
+    result: Str = Str(intPart) + "."
+    fracStr: Str = Str(fracPart)
+    i: Int = fracStr.size
+    loop {
+        if (i >= decimals) break
+        result = result + "0"
+        i += 1
+    }
+    result = result + fracStr
+    return result + "%"
+}
+
+pub hex(n: Int, prefix?: Bool = false, upper?: Bool = false): Str {
+    if (n == 0) {
+        if (prefix) { return "0x0" }
+        return "0"
+    }
+
+    digits: Str = "0123456789abcdef"
+    if (upper) { digits = "0123456789ABCDEF" }
+    result: Str = ""
+    x: Int = abs(n)
+
+    loop {
+        if (x == 0) break
+        digit: Int = x % 16
+        result = digits[digit] + result
+        x = x / 16
+    }
+
+    if (n < 0) result = "-" + result
+    if (prefix) result = "0x" + result
+    return result
+}
+
+pub binary(n: Int, prefix?: Bool = false): Str {
+    if (n == 0) {
+        if (prefix) { return "0b0" }
+        return "0"
+    }
+
+    result: Str = ""
+    x: Int = abs(n)
+
+    loop {
+        if (x == 0) break
+        bit: Int = x % 2
+        result = Str(bit) + result
+        x = x / 2
+    }
+
+    if (n < 0) result = "-" + result
+    if (prefix) result = "0b" + result
+    return result
+}
+
+pub octal(n: Int, prefix?: Bool = false): Str {
+    if (n == 0) {
+        if (prefix) { return "0o0" }
+        return "0"
+    }
+
+    result: Str = ""
+    x: Int = abs(n)
+
+    loop {
+        if (x == 0) break
+        digit: Int = x % 8
+        result = Str(digit) + result
+        x = x / 8
+    }
+
+    if (n < 0) result = "-" + result
+    if (prefix) result = "0o" + result
+    return result
+}
+
+pub base(n: Int, b: Int): Str {
+    if (b < 2 || b > 36) return Str(n)
+    if (n == 0) return "0"
+
+    digits: Str = "0123456789abcdefghijklmnopqrstuvwxyz"
+    result: Str = ""
+    x: Int = abs(n)
+
+    loop {
+        if (x == 0) break
+        digit: Int = x % b
+        result = digits[digit] + result
+        x = x / b
+    }
+
+    if (n < 0) result = "-" + result
+    return result
+}
+
+pub parseInt(s: Str, base?: Int = 10): Any {
+    if (base < 2 || base > 36) return Err("Invalid base: " + Str(base))
+
+    s = trim(s)
+    if (s.size == 0) return Err("Empty string")
+
+    neg: Bool = false
+    if (s[0] == "-") {
+        neg = true
+        s = sliceStr(s, 1, s.size)
+    } else if (s[0] == "+") {
+        s = sliceStr(s, 1, s.size)
+    }
+
+    result: Int = 0
+    i: Int = 0
+    loop {
+        if (i >= s.size) break
+        ch: Str = lower(s[i])
+        digit: Int = -1
+
+        if (ch >= "0" && ch <= "9") {
+            digit = charToInt(ch)
+        } else if (ch >= "a" && ch <= "z") {
+            digit = 10 + charToInt(ch) - charToInt("a")
+        }
+
+        if (digit < 0 || digit >= base) {
+            return Err("Invalid digit '" + s[i] + "' for base " + Str(base))
+        }
+
+        result = result * base + digit
+        i += 1
+    }
+
+    if (neg) result = -result
+    return Ok(result)
+}
+
+pub format(template: Str, args: List): Str {
+    result: Str = ""
+    argIdx: Int = 0
+    i: Int = 0
+
+    loop {
+        if (i >= template.size) break
+        ch: Str = template[i]
+
+        if (ch == "{" && i + 1 < template.size) {
+            if (template[i + 1] == "}") {
+                if (argIdx < args.size) {
+                    result = result + Str(args[argIdx])
+                    argIdx += 1
+                }
+                i += 2
+            } else if (template[i + 1] >= "0" && template[i + 1] <= "9") {
+                idx: Int = charToInt(template[i + 1])
+                if (i + 2 < template.size && template[i + 2] == "}") {
+                    if (idx < args.size) {
+                        result = result + Str(args[idx])
+                    }
+                    i += 3
+                } else {
+                    result = result + ch
+                    i += 1
+                }
+            } else {
+                result = result + ch
+                i += 1
+            }
+        } else if (ch == "\\" && i + 1 < template.size) {
+            nextCh: Str = template[i + 1]
+            if (nextCh == "{" || nextCh == "}") {
+                result = result + nextCh
+                i += 2
+            } else if (nextCh == "n") {
+                result = result + "\n"
+                i += 2
+            } else if (nextCh == "t") {
+                result = result + "\t"
+                i += 2
+            } else {
+                result = result + ch
+                i += 1
+            }
+        } else {
+            result = result + ch
+            i += 1
+        }
+    }
+
+    return result
+}
+
+pub sprintf(fmt: Str, args: List): Str {
+    return format(fmt, args)
+}
+
+pub truncate(s: Str, maxLen: Int, suffix?: Str = "...", wordBoundary?: Bool = false): Str {
+    if (s.size <= maxLen) return s
+
+    if (wordBoundary) {
+        endPos: Int = maxLen - suffix.size
+        while (endPos > 0 && s[endPos] != " " && s[endPos] != "\t" && s[endPos] != "\n") {
+            endPos -= 1
+        }
+        if (endPos > 0) {
+            return sliceStr(s, 0, endPos) + suffix
+        }
+    }
+
+    return sliceStr(s, 0, maxLen - suffix.size) + suffix
+}
+
+pub lines(s: Str): List {
+    result: List = List()
+    if (s.size == 0) {
+        result.add("")
+        return result
+    }
+
+    current: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= s.size) break
+        ch: Str = s[i]
+        if (ch == "\n") {
+            result.add(current)
+            current = ""
+        } else if (ch != "\r") {
+            current = current + ch
+        }
+        i += 1
+    }
+    result.add(current)
+    return result
+}
+
+pub words(s: Str): List {
+    result: List = List()
+    current: Str = ""
+    i: Int = 0
+    inWord: Bool = false
+
+    loop {
+        if (i >= s.size) break
+        ch: Str = s[i]
+        if (ch == " " || ch == "\t" || ch == "\n" || ch == "\r") {
+            if (inWord) {
+                result.add(current)
+                current = ""
+                inWord = false
+            }
+        } else {
+            current = current + ch
+            inWord = true
+        }
+        i += 1
+    }
+
+    if (inWord) {
+        result.add(current)
+    }
+    return result
+}
+
+pub repeatStr(s: Str, n: Int): Str {
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= n) break
+        result = result + s
+        i += 1
+    }
+    return result
+}
+
+pub justify(s: Str, width: Int, align?: Str = "left"): Str {
+    if (s.size >= width) return s
+
+    if (align == "left") {
+        return padRight(s, width, " ")
+    } else if (align == "right") {
+        return padLeft(s, width, " ")
+    } else if (align == "center") {
+        return padCenter(s, width, " ")
+    } else if (align == "justify") {
+        ws: List = words(s)
+        if (ws.size <= 1) return padRight(s, width, " ")
+
+        totalSpaces: Int = width - s.size + (ws.size - 1)
+        spacePerGap: Int = totalSpaces / (ws.size - 1)
+        extraSpaces: Int = totalSpaces % (ws.size - 1)
+
+        result: Str = ""
+        i: Int = 0
+        loop {
+            if (i >= ws.size) break
+            result = result + ws[i]
+            if (i < ws.size - 1) {
+                spaces: Int = spacePerGap
+                if (i < extraSpaces) { spaces = spaces + 1 }
+                j: Int = 0
+                loop {
+                    if (j >= spaces) break
+                    result = result + " "
+                    j += 1
+                }
+            }
+            i += 1
+        }
+        return result
+    }
+    return s
+}
+
+pri abs(n: Int): Int {
+    if (n < 0) return -n
+    return n
+}
+
+pri pow10(n: Int): Int {
+    result: Int = 1
+    i: Int = 0
+    loop {
+        if (i >= n) break
+        result = result * 10
+        i += 1
+    }
+    return result
+}
+
+pri trim(s: Str): Str {
+    start: Int = 0
+    end: Int = s.size
+
+    loop {
+        if (start >= end) break
+        ch: Str = s[start]
+        if (ch != " " && ch != "\t" && ch != "\n" && ch != "\r") break
+        start += 1
+    }
+
+    loop {
+        if (end <= start) break
+        ch: Str = s[end - 1]
+        if (ch != " " && ch != "\t" && ch != "\n" && ch != "\r") break
+        end -= 1
+    }
+
+    return sliceStr(s, start, end)
+}
+
+pri sliceStr(s: Str, start: Int, end: Int): Str {
+    result: Str = ""
+    i: Int = start
+    loop {
+        if (i >= end || i >= s.size) break
+        result = result + s[i]
+        i += 1
+    }
+    return result
+}
+
+pri lower(s: Str): Str {
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= s.size) break
+        ch: Str = s[i]
+        if (ch >= "A" && ch <= "Z") {
+            result = result + Str(charFromInt(charToInt(ch) + 32))
+        } else {
+            result = result + ch
+        }
+        i += 1
+    }
+    return result
+}
+
+pri charToInt(ch: Str): Int {
+    if (ch.size == 0) return 0
+    return ch[0] as Int
+}
+
+pri charFromInt(n: Int): Str {
+    return Str(n)
+}

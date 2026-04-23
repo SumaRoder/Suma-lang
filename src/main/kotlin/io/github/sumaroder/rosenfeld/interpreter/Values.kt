@@ -2,10 +2,20 @@ package io.github.sumaroder.rosenfeld.interpreter
 
 import io.github.sumaroder.rosenfeld.ast.*
 
+typealias NativeMethodImpl = (Interpreter, RosenfeldValue, List<RosenfeldValue>) -> RosenfeldValue
+
+data class NativeMethod(
+    val name: String,
+    val arity: Int = -1,
+    val impl: NativeMethodImpl
+)
+
 sealed class RosenfeldValue {
     abstract fun typeName(): String
     open fun isTruthy(): Boolean = true
     open fun toDisplayString(): String = toString()
+    
+    open fun getMethod(name: String): NativeMethod? = null
 }
 
 object NullValue : RosenfeldValue() {
@@ -29,6 +39,57 @@ data class StringValue(val value: String) : RosenfeldValue() {
     override fun isTruthy() = value.isNotEmpty()
     override fun toString() = value
     override fun toDisplayString() = value
+    
+    override fun getMethod(name: String): NativeMethod? = when (name) {
+        "split" -> NativeMethod("split", 1) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val sep = (args[0] as StringValue).value
+            val parts = str.split(sep)
+            ListValue(parts.map { StringValue(it) }.toMutableList())
+        }
+        "trim" -> NativeMethod("trim", 0) { _, receiver, _ ->
+            StringValue((receiver as StringValue).value.trim())
+        }
+        "startsWith" -> NativeMethod("startsWith", 1) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val prefix = (args[0] as StringValue).value
+            BoolValue(str.startsWith(prefix))
+        }
+        "endsWith" -> NativeMethod("endsWith", 1) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val suffix = (args[0] as StringValue).value
+            BoolValue(str.endsWith(suffix))
+        }
+        "contains" -> NativeMethod("contains", 1) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val substr = (args[0] as StringValue).value
+            BoolValue(str.contains(substr))
+        }
+        "repeat" -> NativeMethod("repeat", 1) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val count = (args[0] as IntValue).value.toInt()
+            StringValue(str.repeat(count))
+        }
+        "replace" -> NativeMethod("replace", 2) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val oldStr = (args[0] as StringValue).value
+            val newStr = (args[1] as StringValue).value
+            StringValue(str.replace(oldStr, newStr))
+        }
+        "toUpper" -> NativeMethod("toUpper", 0) { _, receiver, _ ->
+            StringValue((receiver as StringValue).value.uppercase())
+        }
+        "toLower" -> NativeMethod("toLower", 0) { _, receiver, _ ->
+            StringValue((receiver as StringValue).value.lowercase())
+        }
+        "substring" -> NativeMethod("substring", 2) { _, receiver, args ->
+            val str = (receiver as StringValue).value
+            val start = (args[0] as IntValue).value.toInt()
+            val end = (args[1] as IntValue).value.toInt()
+            StringValue(str.substring(start, end))
+        }
+        else -> null
+    }
 }
 
 data class BoolValue(val value: Boolean) : RosenfeldValue() {
@@ -132,6 +193,73 @@ data class ListValue(
 ) : RosenfeldValue() {
     override fun typeName() = "List"
     override fun toString() = elements.joinToString(", ", "[", "]")
+    
+    override fun getMethod(name: String): NativeMethod? = when (name) {
+        "add" -> NativeMethod("add", 1) { _, receiver, args ->
+            (receiver as ListValue).elements.add(args[0])
+            NullValue
+        }
+        "remove" -> NativeMethod("remove", 1) { _, receiver, args ->
+            val list = (receiver as ListValue).elements
+            val removed = list.remove(args[0])
+            BoolValue(removed)
+        }
+        "removeAt" -> NativeMethod("removeAt", 1) { _, receiver, args ->
+            val list = (receiver as ListValue).elements
+            val index = (args[0] as IntValue).value.toInt()
+            if (index < 0 || index >= list.size) {
+                throw RuntimeException("Index out of bounds: $index")
+            }
+            list.removeAt(index)
+            NullValue
+        }
+        "get" -> NativeMethod("get", 1) { _, receiver, args ->
+            val list = (receiver as ListValue).elements
+            val index = (args[0] as IntValue).value.toInt()
+            if (index < 0 || index >= list.size) {
+                throw RuntimeException("Index out of bounds: $index")
+            }
+            list[index]
+        }
+        "clear" -> NativeMethod("clear", 0) { _, receiver, _ ->
+            (receiver as ListValue).elements.clear()
+            NullValue
+        }
+        "contains" -> NativeMethod("contains", 1) { _, receiver, args ->
+            BoolValue((receiver as ListValue).elements.contains(args[0]))
+        }
+        "indexOf" -> NativeMethod("indexOf", 1) { _, receiver, args ->
+            val index = (receiver as ListValue).elements.indexOf(args[0])
+            IntValue(index.toLong())
+        }
+        "join" -> NativeMethod("join", 1) { _, receiver, args ->
+            val list = (receiver as ListValue).elements
+            val sep = (args[0] as StringValue).value
+            StringValue(list.joinToString(sep) { it.toDisplayString() })
+        }
+        "reverse" -> NativeMethod("reverse", 0) { _, receiver, _ ->
+            val list = (receiver as ListValue).elements
+            list.reverse()
+            NullValue
+        }
+        "sort" -> NativeMethod("sort", 0) { _, receiver, _ ->
+            val list = (receiver as ListValue).elements
+            try {
+                list.sortWith(compareBy { 
+                    when (it) {
+                        is IntValue -> it.value.toDouble()
+                        is FloatValue -> it.value
+                        is StringValue -> it.value
+                        else -> it.toDisplayString()
+                    } as Comparable<Any>
+                })
+            } catch (_: Exception) {
+                // 如果排序失败，忽略错误
+            }
+            NullValue
+        }
+        else -> null
+    }
 }
 
 fun FunctionValue.bind(instance: InstanceValue): FunctionValue {

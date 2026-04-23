@@ -1,6 +1,0 @@
-pub main(): Int {
-    print("Starting...")
-    x: Int = 42
-    print("x = " + x)
-    return 0
-}

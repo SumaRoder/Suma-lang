@@ -78,6 +78,26 @@ class Parser(private val tokens: List<Token>) {
         return if (current + 1 < tokens.size) tokens[current + 1] else tokens.last()
     }
 
+    private fun peekNextNext(): Token {
+        return if (current + 2 < tokens.size) tokens[current + 2] else tokens.last()
+    }
+
+    private fun isClassMethodFollowing(): Boolean {
+        return when (peekNext().type) {
+            LPAR -> true
+            COLON -> {
+                val afterColon = peekNextNext()
+                afterColon.type == LPAR ||
+                (afterColon.type == ID && tokens.getOrNull(current + 4)?.type == LPAR)
+            }
+            else -> false
+        }
+    }
+
+    private fun isMethodAfterType(): Boolean {
+        return tokens.getOrNull(current + 1)?.type == LPAR
+    }
+
     private fun parseImport(): ImportDecl {
         val info = advance().info
         val path = expect(STRING, "Expected import path").literal!!
@@ -104,13 +124,55 @@ class Parser(private val tokens: List<Token>) {
             else -> false
         }
         val isConst = match(CONST)
-
-        return if (check(INIT)) {
-            parseConstructor(isPublic)
-        } else if (peekNext().type == LPAR) {
-            parseMethod(isPublic)
-        } else {
-            parseProperty(isPublic, isConst)
+    
+        val isMethod = isClassMethodFollowing()
+    
+        return when {
+            check(INIT) -> parseConstructor(isPublic)
+            isMethod -> parseMethod(isPublic)
+            else -> {
+                val name = expect(ID, "Expected property name").literal!!
+                
+                val typeAnnotation: String? = if (match(COLON)) {
+                    parseTypeAnnotation()
+                } else null
+                
+                val initializer: Expr? = if (match(ASSIGN)) {
+                    parseExpression()
+                } else null
+                
+                if (typeAnnotation == null && initializer == null) {
+                    error(peek().info, "Property '$name' must have either type annotation or initializer")
+                }
+                
+                var getter: GetterDecl? = null
+                var setter: SetterDecl? = null
+    
+                while (match(DOT)) {
+                    when {
+                        match(GETTER) -> {
+                            getter = if (match(ASSIGN)) {
+                                GetterDecl(parseExpression(), true, peek().info)
+                            } else if (check(LBRA)) {
+                                val block = parseBlock()
+                                GetterDecl(BlockExpr(block), false, block.info)
+                            } else {
+                                GetterDecl(Identifier("__field__", peek().info), true, peek().info)
+                            }
+                        }
+                        match(SETTER) -> {
+                            setter = if (check(LBRA)) {
+                                SetterDecl(parseBlock(), peek().info)
+                            } else {
+                                SetterDecl(null, peek().info)
+                            }
+                        }
+                        else -> error(peek().info, "Expected 'getter' or 'setter'")
+                    }
+                }
+    
+                PropertyDecl(name, typeAnnotation, initializer, isPublic, isConst, getter, setter, peek().info)
+            }
         }
     }
 
@@ -133,7 +195,6 @@ class Parser(private val tokens: List<Token>) {
     private fun parseMethod(isPublic: Boolean): MethodDecl {
         val name = expect(ID, "Expected method name").literal!!
         val params = parseParameters()
-
         val returnType = if (match(COLON)) {
             parseTypeAnnotation()
         } else null
@@ -152,13 +213,22 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseProperty(isPublic: Boolean, isConst: Boolean = false): PropertyDecl {
         val name = expect(ID, "Expected property name").literal!!
-        val typeAnnotation = if (match(COLON)) parseTypeAnnotation() else null
-
-        val initializer = if (match(ASSIGN)) parsePropertyInitializer() else null
-
+    
+        val typeAnnotation: String? = if (match(COLON)) {
+            parseTypeAnnotation()
+        } else null
+    
+        val initializer: Expr? = if (match(ASSIGN)) {
+            parsePropertyInitializer()
+        } else null
+    
+        if (typeAnnotation == null && initializer == null) {
+            error(peek().info, "Property '$name' must have either a type annotation or an initializer")
+        }
+    
         var getter: GetterDecl? = null
         var setter: SetterDecl? = null
-
+    
         while (match(DOT)) {
             when {
                 match(GETTER) -> {
@@ -181,7 +251,7 @@ class Parser(private val tokens: List<Token>) {
                 else -> error(peek().info, "Expected 'getter' or 'setter'")
             }
         }
-
+    
         return PropertyDecl(name, typeAnnotation, initializer, isPublic, isConst, getter, setter, peek().info)
     }
 
@@ -258,22 +328,50 @@ class Parser(private val tokens: List<Token>) {
         }
     }
 
-    private fun parseBlock(): BlockStmt {
-        val info = advance().info
-        val statements = mutableListOf<Stmt>()
-        while (!check(RBRA) && !isAtEnd()) {
-            statements.add(parseStatement())
+        private fun parseBlock(): BlockStmt {
+            val info = advance().info
+            val statements = mutableListOf<Stmt>()
+            while (!check(RBRA) && !isAtEnd()) {
+                statements.add(parseStatement())
+            }
+            expect(RBRA, "Expected '}'")
+            return BlockStmt(statements, info)
         }
-        expect(RBRA, "Expected '}'")
-        return BlockStmt(statements, info)
+    
+    private fun parseVarDecl(): VarDecl {
+        val nameTok = advance()
+        val name = nameTok.literal!!
+        val info = nameTok.info
+        
+        val typeAnnotation: String? = if (check(COLON)) {
+            advance()
+            parseTypeAnnotation()
+        } else null
+        
+        val varInit: Expr? = if (match(ASSIGN)) {
+            parseExpression()
+        } else null
+        
+        if (typeAnnotation == null && varInit == null) {
+            error(info, "Variable '$name' must have either type annotation or initializer")
+        }
+        
+        return VarDecl(name, typeAnnotation, varInit, true, false, info)
     }
 
-    private fun parseVarDecl(): VarDecl {
-        val name = advance().literal!!
-        val info = advance().info
-        val typeAnnotation = if (!check(ASSIGN)) parseTypeAnnotation() else null
-        val initializer = if (match(ASSIGN)) parseExpression() else null
-        return VarDecl(name, typeAnnotation, initializer, true, false, info)
+    private fun parseVarStmt(): VarStmt {
+        val nameTok = advance()
+        val name = nameTok.literal!!
+        
+        val typeAnnotation: String? = if (check(COLON)) {
+            advance()
+            parseTypeAnnotation()
+        } else null
+        
+        expect(ASSIGN, "Variable declaration must have an initializer")
+        val initializer = parseExpression()
+        
+        return VarStmt(name, typeAnnotation, initializer, nameTok.info)
     }
 
     private fun parseIf(): IfStmt {

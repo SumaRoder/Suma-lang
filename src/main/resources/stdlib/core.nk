@@ -1,168 +1,330 @@
-pub ResultExt {
-    pub map(result: R, fn: Function): R {
-        result -> {
-            Ok = Ok(fn(it))
-            Err = result
-        }
-    }
-    
-    pub mapErr(result: R, fn: Function): R {
-        result -> {
-            Ok = result
-            Err = Err(fn(it))
-        }
-    }
-    
-    pub unwrapOr(result: R, default: Any): Any {
-        result -> {
-            Ok = it
-            Err = default
-        }
-    }
-    
-    pub isOk(result: R): Bool {
-        result -> {
-            Ok = true
-            Err = false
-        }
-    }
-    
-    pub isErr(result: R): Bool {
-        result -> {
-            Ok = false
-            Err = true
-        }
-    }
-    
-    pub andThen(result: R, fn: Function): R {
-        result -> {
-            Ok = fn(it)
-            Err = result
-        }
-    }
-    
-    pub orElse(result: R, fn: Function): R {
-        result -> {
-            Ok = result
-            Err = fn(it)
-        }
+pub isOk(result): Bool {
+    return result -> {
+        Ok = true
+        Err = false
     }
 }
 
-pub BoolExt {
-    pub not(b: Bool): Bool = !b
-    
-    pub and(a: Bool, b: Bool): Bool = a && b
-    
-    pub or(a: Bool, b: Bool): Bool = a || b
-    
-    pub xor(a: Bool, b: Bool): Bool = (a || b) && !(a && b)
-    
-    pub thenElse(cond: Bool, thenVal: Any, elseVal: Any): Any {
-        if (cond) {
-            return thenVal
-        }
-        return elseVal
+pub isErr(result): Bool {
+    return result -> {
+        Ok = false
+        Err = true
     }
 }
 
-pub IntExt {
-    pub isEven(n: Int): Bool = n % 2 == 0
-    
-    pub isOdd(n: Int): Bool = n % 2 == 1
-    
-    pub isPositive(n: Int): Bool = n > 0
-    
-    pub isNegative(n: Int): Bool = n < 0
-    
-    pub isZero(n: Int): Bool = n == 0
-    
-    pub times(n: Int, fn: Function) {
-        i: Int = 0
-        loop {
-            if (i >= n) break
-            fn(i)
-            i += 1
-        }
-    }
-    
-    pub to(n: Int, end: Int): List {
-        result: List = List()
-        i: Int = n
-        loop {
-            if (i > end) break
-            result.add(i)
-            i += 1
-        }
-        return result
-    }
-    
-    pub until(n: Int, end: Int): List {
-        result: List = List()
-        i: Int = n
-        loop {
-            if (i >= end) break
-            result.add(i)
-            i += 1
-        }
-        return result
+pub unwrapOr(result, default): Any {
+    return result -> {
+        Ok = it
+        Err = default
     }
 }
 
-pub Tuple2 {
-    pub first: Any
-        .getter
-    pub second: Any
-        .getter
-    
-    pub new(first: Any, second: Any): Tuple2 {
-        t: Tuple2 = Tuple2()
-        t.first = first
-        t.second = second
-        return t
+pub unwrapOrElse(result, fn: Function): Any {
+    return result -> {
+        Ok = it
+        Err = fn(it)
     }
-    
-    pub swap(): Tuple2 {
-        return Tuple2.new(this.second, this.first)
+}
+
+pub map(result, fn: Function): Any {
+    return result -> {
+        Ok = Ok(fn(it))
+        Err = result
     }
+}
+
+pub mapErr(result, fn: Function): Any {
+    return result -> {
+        Ok = result
+        Err = Err(fn(it))
+    }
+}
+
+pub andThen(result, fn: Function): Any {
+    return result -> {
+        Ok = fn(it)
+        Err = result
+    }
+}
+
+pub orElse(result, fn: Function): Any {
+    return result -> {
+        Ok = result
+        Err = fn(it)
+    }
+}
+
+pub expect(result, msg: Str): Any {
+    return result -> {
+        Ok = it
+        Err = panic(msg + ": " + Str(it))
+    }
+}
+
+pub unwrap(result): Any {
+    return expect(result, "Called unwrap on Err")
+}
+
+pub flatten(result): Any {
+    return result -> {
+        Ok = it
+        Err = result
+    }
+}
+
+pub panic(msg: Str): Any {
+    throw(msg)
+}
+
+pub assert(cond: Bool, msg?: Str = "Assertion failed") {
+    if (!cond) {
+        panic(msg)
+    }
+}
+
+pub Pair {
+    pri firstVal: Any
+    pri secondVal: Any
+
+    pub setup(first: Any, second: Any) {
+        this.firstVal = first
+        this.secondVal = second
+    }
+
+    pub first(): Any {
+        return this.firstVal
+    }
+
+    pub second(): Any {
+        return this.secondVal
+    }
+
+    pub swap(): Pair {
+        p: Pair = Pair()
+        p.setup(this.secondVal, this.firstVal)
+        return p
+    }
+
+    pub toList(): List {
+        return List(this.firstVal, this.secondVal)
+    }
+
+    pub toStr(): Str {
+        return "(" + this.firstVal + ", " + this.secondVal + ")"
+    }
+}
+
+pub pair(first: Any, second: Any): Pair {
+    p: Pair = Pair()
+    p.setup(first, second)
+    return p
 }
 
 pub Range {
-    pub start: Int
-        .getter
-    pub end: Int
-        .getter
-    pub step: Int = 1
-        .getter
-    
-    pub new(start: Int, end: Int, step?: Int = 1): Range {
-        r: Range = Range()
-        r.start = start
-        r.end = end
-        r.step = step
-        return r
+    pri startVal: Int
+    pri endVal: Int
+    pri stepVal: Int
+    pri cachedSize: Int = -1
+
+    pub setup(start: Int, end: Int, step?: Int = 1) {
+        assert(step != 0, "Range step cannot be zero")
+        this.startVal = start
+        this.endVal = end
+        this.stepVal = step
     }
-    
+
+    pub start(): Int {
+        return this.startVal
+    }
+
+    pub end(): Int {
+        return this.endVal
+    }
+
+    pub step(): Int {
+        return this.stepVal
+    }
+
     pub contains(n: Int): Bool {
-        return n >= this.start && n < this.end && (n - this.start) % this.step == 0
+        if (this.stepVal > 0) {
+            return n >= this.startVal && n < this.endVal && (n - this.startVal) % this.stepVal == 0
+        }
+        return n <= this.startVal && n > this.endVal && (this.startVal - n) % (-this.stepVal) == 0
     }
-    
+
     pub toList(): List {
         result: List = List()
-        i: Int = this.start
-        loop {
-            if (i >= this.end) break
-            result.add(i)
-            i += this.step
+        if (this.stepVal > 0) {
+            i: Int = this.startVal
+            loop {
+                if (i >= this.endVal) break
+                result.add(i)
+                i += this.stepVal
+            }
+        } else {
+            i: Int = this.startVal
+            loop {
+                if (i <= this.endVal) break
+                result.add(i)
+                i += this.stepVal
+            }
         }
         return result
     }
-    
+
     pub size(): Int {
-        return (this.end - this.start) / this.step
+        if (this.cachedSize >= 0) {
+            return this.cachedSize
+        }
+
+        if (this.stepVal > 0) {
+            if (this.startVal >= this.endVal) {
+                this.cachedSize = 0
+            } else {
+                this.cachedSize = (this.endVal - this.startVal + this.stepVal - 1) / this.stepVal
+            }
+        } else {
+            if (this.startVal <= this.endVal) {
+                this.cachedSize = 0
+            } else {
+                this.cachedSize = (this.startVal - this.endVal - this.stepVal - 1) / (-this.stepVal)
+            }
+        }
+        return this.cachedSize
     }
-    
+
     pub isEmpty(): Bool {
-        return this.start >= this.end
+        if (this.stepVal > 0) {
+            return this.startVal >= this.endVal
+        }
+        return this.startVal <= this.endVal
     }
+
+    pub first(): R<Int, Str> {
+        if (this.isEmpty()) {
+            return Err("Range is empty")
+        }
+        return Ok(this.startVal)
+    }
+
+    pub last(): R<Int, Str> {
+        if (this.isEmpty()) {
+            return Err("Range is empty")
+        }
+        if (this.stepVal > 0) {
+            remainder: Int = (this.endVal - this.startVal) % this.stepVal
+            if (remainder == 0) {
+                return Ok(this.endVal - this.stepVal)
+            }
+            return Ok(this.endVal - remainder)
+        } else {
+            remainder: Int = (this.startVal - this.endVal) % (-this.stepVal)
+            if (remainder == 0) {
+                return Ok(this.endVal - this.stepVal)
+            }
+            return Ok(this.endVal + remainder)
+        }
+    }
+
+    pub reversed(): Range {
+        if (this.isEmpty()) {
+            return Range(this.startVal, this.endVal, this.stepVal)
+        }
+        lastVal: Int = unwrap(this.last())
+        return Range(lastVal, this.startVal - this.stepVal, -this.stepVal)
+    }
+}
+
+pub range(start: Int, end: Int, step?: Int = 1): Range {
+    r: Range = Range()
+    r.setup(start, end, step)
+    return r
+}
+
+pub rangeTo(end: Int): Range {
+    r: Range = Range()
+    r.setup(0, end, 1)
+    return r
+}
+
+pub Optional {
+    pri value: Any
+    pri hasValue: Bool
+
+    pub setup(val?: Any = null, hasVal?: Bool = false) {
+        this.value = val
+        this.hasValue = hasVal
+    }
+
+    pub isSome(): Bool {
+        return this.hasValue
+    }
+
+    pub isNone(): Bool {
+        return !this.hasValue
+    }
+
+    pub get(): Any {
+        if (!this.hasValue) {
+            panic("Called get on None")
+        }
+        return this.value
+    }
+
+    pub getOr(default: Any): Any {
+        if (this.hasValue) {
+            return this.value
+        }
+        return default
+    }
+
+    pub getOrElse(fn: Function): Any {
+        if (this.hasValue) {
+            return this.value
+        }
+        return fn()
+    }
+
+    pub map(fn: Function): Optional {
+        if (this.hasValue) {
+            return Optional.some(fn(this.value))
+        }
+        return Optional.none()
+    }
+
+    pub filter(fn: Function): Optional {
+        if (this.hasValue && fn(this.value)) {
+            return this
+        }
+        return Optional.none()
+    }
+
+    pub toResult(errMsg?: Str = "Optional is None"): Any {
+        if (this.hasValue) {
+            return Ok(this.value)
+        }
+        return Err(errMsg)
+    }
+}
+
+pub some(val: Any): Optional {
+    return Optional.some(val)
+}
+
+pub none(): Optional {
+    return Optional.none()
+}
+
+pub cmp(a, b): Int {
+    if (a < b) return -1
+    if (a > b) return 1
+    return 0
+}
+
+pub isBetween(n, low, high): Bool {
+    return n >= low && n <= high
+}
+
+pub inRange(n: Int, r: Range): Bool {
+    return r.contains(n)
 }

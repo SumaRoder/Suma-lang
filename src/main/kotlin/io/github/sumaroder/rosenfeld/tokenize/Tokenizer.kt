@@ -244,11 +244,11 @@ object Tokenizer {
         return true
     }
 
-    fun tokenize(src: String): MutableList<Token> {
+    fun tokenize(src: String, fileName: String? = null): MutableList<Token> {
         val tokenList = mutableListOf<Token>()
         val cs = CharStream(src)
         while (cs.hasNext()) {
-            val info = TokenInfo(null, cs.line, cs.column)
+            val info = TokenInfo(fileName, cs.line, cs.column)
             val c = cs.next()
             when (c) {
                 ' ', '\t', '\r', '\n' -> { }
@@ -284,7 +284,7 @@ object Tokenizer {
                 }
             }
         }
-        addToken(tokenList, TokenType.EOF, TokenInfo(null, 0, 0), null)
+        addToken(tokenList, TokenType.EOF, TokenInfo(fileName, 0, 0), null)
         return tokenList
     }
 }
