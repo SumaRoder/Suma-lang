@@ -10,23 +10,23 @@ pub Stack {
     }
 
     pub pop(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("Stack is empty")
         }
         idx: Int = this.data.size - 1
         item: Any = this.data[idx]
-        this.data.removeAt(idx)
+        this.data.erase(idx)
         return Ok(item)
     }
 
     pub peek(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("Stack is empty")
         }
         return Ok(this.data[this.data.size - 1])
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.data.size == 0
     }
 
@@ -38,12 +38,12 @@ pub Stack {
         this.data = List()
     }
 
-    pub toList(): List {
-        return copyList(this.data)
+    pub to_list(): List {
+        return copy_list(this.data)
     }
 
-    pub toStr(): Str {
-        return "Stack(" + this.data.toStr() + ")"
+    pub to_str(): Str {
+        return "Stack(" + this.data.to_str() + ")"
     }
 }
 
@@ -59,22 +59,22 @@ pub Queue {
     }
 
     pub dequeue(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("Queue is empty")
         }
         item: Any = this.data[0]
-        this.data.removeAt(0)
+        this.data.erase(0)
         return Ok(item)
     }
 
     pub peek(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("Queue is empty")
         }
         return Ok(this.data[0])
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.data.size == 0
     }
 
@@ -86,12 +86,12 @@ pub Queue {
         this.data = List()
     }
 
-    pub toList(): List {
-        return copyList(this.data)
+    pub to_list(): List {
+        return copy_list(this.data)
     }
 
-    pub toStr(): Str {
-        return "Queue(" + this.data.toStr() + ")"
+    pub to_str(): Str {
+        return "Queue(" + this.data.to_str() + ")"
     }
 }
 
@@ -102,10 +102,8 @@ pub Deque {
         this.data = List()
     }
 
-    pub pushFront(item: Any) {
-        // 在开头插入需要移动所有元素，暂时使用 add + reverse 模拟
+    pub push_front(item: Any) {
         this.data.add(item)
-        // 将新元素移动到开头
         i: Int = this.data.size - 1
         loop {
             if (i <= 0) break
@@ -116,44 +114,44 @@ pub Deque {
         }
     }
 
-    pub pushBack(item: Any) {
+    pub push_back(item: Any) {
         this.data.add(item)
     }
 
-    pub popFront(): Any {
-        if (this.isEmpty()) {
+    pub pop_front(): Any {
+        if (this.empty()) {
             return Err("Deque is empty")
         }
         item: Any = this.data[0]
-        this.data.removeAt(0)
+        this.data.erase(0)
         return Ok(item)
     }
 
-    pub popBack(): Any {
-        if (this.isEmpty()) {
+    pub pop_back(): Any {
+        if (this.empty()) {
             return Err("Deque is empty")
         }
         idx: Int = this.data.size - 1
         item: Any = this.data[idx]
-        this.data.removeAt(idx)
+        this.data.erase(idx)
         return Ok(item)
     }
 
-    pub peekFront(): Any {
-        if (this.isEmpty()) {
+    pub peek_front(): Any {
+        if (this.empty()) {
             return Err("Deque is empty")
         }
         return Ok(this.data[0])
     }
 
-    pub peekBack(): Any {
-        if (this.isEmpty()) {
+    pub peek_back(): Any {
+        if (this.empty()) {
             return Err("Deque is empty")
         }
         return Ok(this.data[this.data.size - 1])
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.data.size == 0
     }
 
@@ -165,8 +163,8 @@ pub Deque {
         this.data = List()
     }
 
-    pub toList(): List {
-        return copyList(this.data)
+    pub to_list(): List {
+        return copy_list(this.data)
     }
 }
 
@@ -180,9 +178,9 @@ pub HashMap {
     }
 
     pub put(key: Any, value: Any) {
-        i: Int = findKeyIndex(this.keys, key)
-        if (i >= 0) {
-            this.values[i] = value
+        idx: Int = find_key_index(this.keys, key)
+        if (idx >= 0) {
+            this.values[idx] = value
         } else {
             this.keys.add(key)
             this.values.add(value)
@@ -190,30 +188,30 @@ pub HashMap {
     }
 
     pub get(key: Any): Any {
-        i: Int = findKeyIndex(this.keys, key)
-        if (i >= 0) {
-            return Ok(this.values[i])
+        idx: Int = find_key_index(this.keys, key)
+        if (idx >= 0) {
+            return Ok(this.values[idx])
         }
         return Err("Key not found: " + Str(key))
     }
 
-    pub getOr(key: Any, default: Any): Any {
-        i: Int = findKeyIndex(this.keys, key)
-        if (i >= 0) {
-            return this.values[i]
+    pub get_or(key: Any, default: Any): Any {
+        idx: Int = find_key_index(this.keys, key)
+        if (idx >= 0) {
+            return this.values[idx]
         }
         return default
     }
 
     pub contains(key: Any): Bool {
-        return findKeyIndex(this.keys, key) >= 0
+        return find_key_index(this.keys, key) >= 0
     }
 
     pub remove(key: Any): Bool {
-        i: Int = findKeyIndex(this.keys, key)
-        if (i >= 0) {
-            this.keys.removeAt(i)
-            this.values.removeAt(i)
+        idx: Int = find_key_index(this.keys, key)
+        if (idx >= 0) {
+            this.keys.erase(idx)
+            this.values.erase(idx)
             return true
         }
         return false
@@ -223,7 +221,7 @@ pub HashMap {
         return this.keys.size
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.keys.size == 0
     }
 
@@ -232,12 +230,12 @@ pub HashMap {
         this.values = List()
     }
 
-    pub keysList(): List {
-        return copyList(this.keys)
+    pub keys_list(): List {
+        return copy_list(this.keys)
     }
 
-    pub valuesList(): List {
-        return copyList(this.values)
+    pub values_list(): List {
+        return copy_list(this.values)
     }
 
     pub entries(): List {
@@ -251,14 +249,14 @@ pub HashMap {
         return result
     }
 
-    pub mapValues(fn: Function): HashMap {
+    pub map_values(fn: Function): HashMap {
         result: HashMap = HashMap()
         result.setup()
         i: Int = 0
         loop {
             if (i >= this.keys.size) break
-            newValue: Any = fn(this.values[i])
-            result.put(this.keys[i], newValue)
+            new_value: Any = fn(this.values[i])
+            result.put(this.keys[i], new_value)
             i += 1
         }
         return result
@@ -278,7 +276,7 @@ pub HashMap {
         return result
     }
 
-    pub toStr(): Str {
+    pub to_str(): Str {
         entries: List = List()
         i: Int = 0
         loop {
@@ -304,13 +302,13 @@ pub Set {
     }
 
     pub contains(item: Any): Bool {
-        return findKeyIndex(this.data, item) >= 0
+        return find_key_index(this.data, item) >= 0
     }
 
     pub remove(item: Any): Bool {
-        i: Int = findKeyIndex(this.data, item)
+        i: Int = find_key_index(this.data, item)
         if (i >= 0) {
-            this.data.removeAt(i)
+            this.data.erase(i)
             return true
         }
         return false
@@ -320,12 +318,12 @@ pub Set {
         return this.data.size
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.data.size == 0
     }
 
-    pub toList(): List {
-        return copyList(this.data)
+    pub to_list(): List {
+        return copy_list(this.data)
     }
 
     pub clear() {
@@ -380,7 +378,7 @@ pub Set {
         return result
     }
 
-    pub isSubset(other: Set): Bool {
+    pub is_subset(other: Set): Bool {
         i: Int = 0
         loop {
             if (i >= this.data.size) break
@@ -390,12 +388,12 @@ pub Set {
         return true
     }
 
-    pub isSuperset(other: Set): Bool {
-        return other.isSubset(this)
+    pub is_superset(other: Set): Bool {
+        return other.is_subset(this)
     }
 
-    pub toStr(): Str {
-        return "Set(" + this.data.toStr() + ")"
+    pub to_str(): Str {
+        return "Set(" + this.data.to_str() + ")"
     }
 }
 
@@ -420,23 +418,23 @@ pub PriorityQueue {
     }
 
     pub dequeue(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("PriorityQueue is empty")
         }
         item: Any = this.items[0]
-        this.items.removeAt(0)
-        this.priorities.removeAt(0)
+        this.items.erase(0)
+        this.priorities.erase(0)
         return Ok(item)
     }
 
     pub peek(): Any {
-        if (this.isEmpty()) {
+        if (this.empty()) {
             return Err("PriorityQueue is empty")
         }
         return Ok(this.items[0])
     }
 
-    pub isEmpty(): Bool {
+    pub empty(): Bool {
         return this.items.size == 0
     }
 
@@ -450,7 +448,7 @@ pub PriorityQueue {
     }
 }
 
-pri findKeyIndex(keys: List, key: Any): Int {
+pri find_key_index(keys: List, key: Any): Int {
     i: Int = 0
     loop {
         if (i >= keys.size) break
@@ -462,7 +460,7 @@ pri findKeyIndex(keys: List, key: Any): Int {
     return -1
 }
 
-pri copyList(list: List): List {
+pri copy_list(list: List): List {
     result: List = List()
     i: Int = 0
     loop {

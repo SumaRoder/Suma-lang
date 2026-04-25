@@ -201,15 +201,15 @@ class Interpreter {
                         obj is ListValue && index is IntValue -> {
                             val i = index.value.toInt()
                             if (i < 0 || i >= obj.elements.size) {
-                                throw RuntimeException("Index out of bounds: $i")
+                                throw RuntimeException("index out of bounds: $i")
                             }
                             obj.elements[i] = right
                             right
                         }
-                        else -> throw RuntimeException("Cannot index ${obj.typeName()} with ${index.typeName()}")
+                        else -> throw RuntimeException("cannot index ${obj.typeName()} with ${index.typeName()}")
                     }
                 }
-                else -> throw RuntimeException("Invalid assignment target")
+                else -> throw RuntimeException("invalid assignment target")
             }
         }
         
@@ -223,13 +223,13 @@ class Interpreter {
                 left is IntValue && right is FloatValue -> FloatValue(left.value + right.value)
                 left is FloatValue && right is IntValue -> FloatValue(left.value + right.value)
                 left is StringValue || right is StringValue -> StringValue(left.toDisplayString() + right.toDisplayString())
-                else -> throw RuntimeException("Cannot add ${left.typeName()} and ${right.typeName()}")
+                else -> throw RuntimeException("cannot add ${left.typeName()} and ${right.typeName()}")
             }
             BinaryOp.MINUS -> numericOp(left, right, "subtract") { a, b -> a - b }
             BinaryOp.MULT -> numericOp(left, right, "multiply") { a, b -> a * b }
             BinaryOp.DIV -> when {
                 left is IntValue && right is IntValue -> {
-                    if (right.value == 0L) throw RuntimeException("Division by zero")
+                    if (right.value == 0L) throw RuntimeException("division by zero")
                     IntValue(left.value / right.value)
                 }
                 else -> numericOp(left, right, "divide") { a, b -> 
@@ -249,7 +249,7 @@ class Interpreter {
             BinaryOp.LE -> BoolValue(compareValues(left, right) <= 0)
             BinaryOp.EQ -> BoolValue(isEqual(left, right))
             BinaryOp.NE -> BoolValue(!isEqual(left, right))
-            else -> throw RuntimeException("Unknown binary operator: ${expr.operator}")
+            else -> throw RuntimeException("unknown binary operator: ${expr.operator}")
         }
     }
 
@@ -273,7 +273,7 @@ class Interpreter {
         return when (value) {
             is IntValue -> value.value
             is FloatValue -> value.value.toLong()
-            else -> throw RuntimeException("Expected number, got ${value.typeName()}")
+            else -> throw RuntimeException("expected number, got ${value.typeName()}")
         }
     }
 
@@ -281,7 +281,7 @@ class Interpreter {
         return when (value) {
             is IntValue -> value.value.toDouble()
             is FloatValue -> value.value
-            else -> throw RuntimeException("Expected number, got ${value.typeName()}")
+            else -> throw RuntimeException("expected number, got ${value.typeName()}")
         }
     }
 
@@ -292,7 +292,7 @@ class Interpreter {
             left is IntValue && right is FloatValue -> left.value.toDouble().compareTo(right.value)
             left is FloatValue && right is IntValue -> left.value.compareTo(right.value.toDouble())
             left is StringValue && right is StringValue -> left.value.compareTo(right.value)
-            else -> throw RuntimeException("Cannot compare ${left.typeName()} and ${right.typeName()}")
+            else -> throw RuntimeException("cannot compare ${left.typeName()} and ${right.typeName()}")
         }
     }
 
@@ -316,7 +316,7 @@ class Interpreter {
             UnaryOp.MINUS -> when (operand) {
                 is IntValue -> IntValue(-operand.value)
                 is FloatValue -> FloatValue(-operand.value)
-                else -> throw RuntimeException("Cannot negate ${operand.typeName()}")
+                else -> throw RuntimeException("cannot negate ${operand.typeName()}")
             }
             UnaryOp.NOTL -> BoolValue(!operand.isTruthy())
             UnaryOp.NOTB -> IntValue(toInt(operand).inv())
@@ -331,24 +331,41 @@ class Interpreter {
             is FunctionValue -> callFunction(callee, arguments)
             is ClassValue -> callee.call(this, arguments)
             is NativeFunction -> callee.call(this, arguments)
-            else -> throw RuntimeException("Cannot call ${callee.typeName()}")
+            else -> throw RuntimeException("cannot call ${callee.typeName()}")
         }
     }
 
     fun callFunction(function: FunctionValue, arguments: List<RosenfeldValue>): RosenfeldValue {
+        val minRequired = function.params.count { it.defaultValue == null }
+        val maxAllowed = function.params.size
+        
+        when {
+            arguments.size < minRequired -> {
+                val missing = function.params
+                    .filterIndexed { i, p -> i >= arguments.size && p.defaultValue == null }
+                    .joinToString(", ") { "'${it.name}'" }
+                throw RuntimeException("missing argument(s) for parameter(s) $missing")
+            }
+            arguments.size > maxAllowed -> {
+                throw RuntimeException(
+                    "too many arguments: expected at most $maxAllowed, got ${arguments.size}"
+                )
+            }
+        }
+    
         val env = Environment(function.closure)
-
+    
         for (i in function.params.indices) {
             val param = function.params[i]
             val value = if (i < arguments.size) {
                 arguments[i]
             } else {
                 param.defaultValue?.let { evaluate(it) }
-                    ?: throw RuntimeException("Missing argument for parameter '${param.name}'")
+                    ?: throw RuntimeException("missing argument for parameter '${param.name}'")
             }
             env.define(param.name, value)
         }
-
+    
         val previous = environment
         environment = env
         try {
@@ -376,18 +393,18 @@ class Interpreter {
             is InstanceValue -> obj.get(expr.property, this)
             is StringValue -> when (expr.property) {
                 "size" -> IntValue(obj.value.length.toLong())
-                "isEmpty" -> BoolValue(obj.value.isEmpty())
+                "empty" -> BoolValue(obj.value.isEmpty())
                 else -> {
                     obj.getMethod(expr.property)?.let { method ->
                         NativeFunction(method.name, method.arity) { interpreter, args ->
                             method.impl(interpreter, obj, args)
                         }
-                    } ?: throw RuntimeException("String has no property or method '${expr.property}'")
+                    } ?: throw RuntimeException("string has no property or method '${expr.property}'")
                 }
             }
             is ListValue -> when (expr.property) {
                 "size" -> IntValue(obj.elements.size.toLong())
-                "isEmpty" -> BoolValue(obj.elements.isEmpty())
+                "empty" -> BoolValue(obj.elements.isEmpty())
                 "add" -> NativeFunction("add", 1) { _, args ->
                     obj.elements.add(args[0])
                     NullValue
@@ -397,22 +414,22 @@ class Interpreter {
                         NativeFunction(method.name, method.arity) { interpreter, args ->
                             method.impl(interpreter, obj, args)
                         }
-                    } ?: throw RuntimeException("List has no property or method '${expr.property}'")
+                    } ?: throw RuntimeException("list has no property or method '${expr.property}'")
                 }
             }
             is ResultValue -> when (expr.property) {
-                "mustOk" -> NativeFunction("mustOk") { _, args ->
+                "must_ok" -> NativeFunction("must_ok") { _, args ->
                     val errorMsg = args.getOrNull(0) as? StringValue
                     when (obj) {
                         is ResultValue.Ok -> obj.value
                         is ResultValue.Err -> throw RuntimeException(
-                            errorMsg?.value ?: "Called mustOk on Err value: ${obj.error}"
+                            errorMsg?.value ?: "called must_ok on Err value: ${obj.error}"
                         )
                     }
                 }
-                else -> throw RuntimeException("Result has no property '${expr.property}'")
+                else -> throw RuntimeException("result has no property '${expr.property}'")
             }
-            else -> throw RuntimeException("Cannot access member of ${obj.typeName()}")
+            else -> throw RuntimeException("cannot access member of ${obj.typeName()}")
         }
     }
 
@@ -424,18 +441,18 @@ class Interpreter {
             obj is ListValue && index is IntValue -> {
                 val i = index.value.toInt()
                 if (i < 0 || i >= obj.elements.size) {
-                    throw RuntimeException("Index out of bounds: $i")
+                    throw RuntimeException("index out of bounds: $i")
                 }
                 obj.elements[i]
             }
             obj is StringValue && index is IntValue -> {
                 val i = index.value.toInt()
                 if (i < 0 || i >= obj.value.length) {
-                    throw RuntimeException("Index out of bounds: $i")
+                    throw RuntimeException("index out of bounds: $i")
                 }
                 StringValue(obj.value[i].toString())
             }
-            else -> throw RuntimeException("Cannot index ${obj.typeName()} with ${index.typeName()}")
+            else -> throw RuntimeException("cannot index ${obj.typeName()} with ${index.typeName()}")
         }
     }
 
@@ -481,7 +498,7 @@ class Interpreter {
             }
         }
 
-        throw RuntimeException("No matching branch for $value")
+        throw RuntimeException("no matching branch for $value")
     }
 
     fun evaluateGetter(instance: InstanceValue, prop: PropertyDecl, getter: GetterDecl): RosenfeldValue {
@@ -542,6 +559,10 @@ class Interpreter {
             println(output)
             NullValue
         })
+        
+        globals.define("current_time_millis", NativeFunction("current_time_millis") { interpreter, args ->
+            IntValue(System.currentTimeMillis())
+        })
 
         globals.define("Ok", NativeFunction("Ok") { _, args ->
             if (args.isEmpty()) throw RuntimeException("Ok requires a value")
@@ -553,17 +574,17 @@ class Interpreter {
             ResultValue.Err(args[0])
         })
 
-        globals.define("mustOk", NativeFunction("mustOk") { _, args ->
+        globals.define("must_ok", NativeFunction("must_ok") { _, args ->
             val result = args.getOrNull(0)
-                ?: throw RuntimeException("mustOk requires a Result argument")
+                ?: throw RuntimeException("must_ok requires a Result argument")
             val errorMsg = args.getOrNull(1) as? StringValue
 
             when (result) {
                 is ResultValue.Ok -> result.value
                 is ResultValue.Err -> throw RuntimeException(
-                    errorMsg?.value ?: "Called mustOk on Err value: ${result.error}"
+                    errorMsg?.value ?: "called must_ok on Err value: ${result.error}"
                 )
-                else -> throw RuntimeException("mustOk requires a Result argument")
+                else -> throw RuntimeException("must_ok requires a Result argument")
             }
         })
 
@@ -582,7 +603,7 @@ class Interpreter {
                 is IntValue -> arg
                 is FloatValue -> IntValue(arg.value.toLong())
                 is StringValue -> IntValue(arg.value.toLongOrNull() ?: 0)
-                else -> throw RuntimeException("Cannot convert ${arg.typeName()} to Int")
+                else -> throw RuntimeException("cannot convert ${arg.typeName()} to int")
             }
         })
 
@@ -592,7 +613,7 @@ class Interpreter {
                 is IntValue -> FloatValue(arg.value.toDouble())
                 is FloatValue -> arg
                 is StringValue -> FloatValue(arg.value.toDoubleOrNull() ?: 0.0)
-                else -> throw RuntimeException("Cannot convert ${arg.typeName()} to Float")
+                else -> throw RuntimeException("cannot convert ${arg.typeName()} to float")
             }
         })
     }

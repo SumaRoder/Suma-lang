@@ -1,25 +1,25 @@
-pub isOk(result): Bool {
+pub is_ok(result): Bool {
     return result -> {
         Ok = true
         Err = false
     }
 }
 
-pub isErr(result): Bool {
+pub is_err(result): Bool {
     return result -> {
         Ok = false
         Err = true
     }
 }
 
-pub unwrapOr(result, default): Any {
+pub unwrap_or(result, default): Any {
     return result -> {
         Ok = it
         Err = default
     }
 }
 
-pub unwrapOrElse(result, fn: Function): Any {
+pub unwrap_or_else(result, fn: Function): Any {
     return result -> {
         Ok = it
         Err = fn(it)
@@ -33,21 +33,21 @@ pub map(result, fn: Function): Any {
     }
 }
 
-pub mapErr(result, fn: Function): Any {
+pub map_err(result, fn: Function): Any {
     return result -> {
         Ok = result
         Err = Err(fn(it))
     }
 }
 
-pub andThen(result, fn: Function): Any {
+pub and_then(result, fn: Function): Any {
     return result -> {
         Ok = fn(it)
         Err = result
     }
 }
 
-pub orElse(result, fn: Function): Any {
+pub or_else(result, fn: Function): Any {
     return result -> {
         Ok = result
         Err = fn(it)
@@ -83,34 +83,34 @@ pub assert(cond: Bool, msg?: Str = "Assertion failed") {
 }
 
 pub Pair {
-    pri firstVal: Any
-    pri secondVal: Any
+    pri first_val: Any
+    pri second_val: Any
 
     pub setup(first: Any, second: Any) {
-        this.firstVal = first
-        this.secondVal = second
+        this.first_val = first
+        this.second_val = second
     }
 
     pub first(): Any {
-        return this.firstVal
+        return this.first_val
     }
 
     pub second(): Any {
-        return this.secondVal
+        return this.second_val
     }
 
     pub swap(): Pair {
         p: Pair = Pair()
-        p.setup(this.secondVal, this.firstVal)
+        p.setup(this.second_val, this.first_val)
         return p
     }
 
-    pub toList(): List {
-        return List(this.firstVal, this.secondVal)
+    pub to_list(): List {
+        return List(this.first_val, this.second_val)
     }
 
-    pub toStr(): Str {
-        return "(" + this.firstVal + ", " + this.secondVal + ")"
+    pub to_str(): Str {
+        return "(" + this.first_val + ", " + this.second_val + ")"
     }
 }
 
@@ -121,117 +121,117 @@ pub pair(first: Any, second: Any): Pair {
 }
 
 pub Range {
-    pri startVal: Int
-    pri endVal: Int
-    pri stepVal: Int
-    pri cachedSize: Int = -1
+    pri start_val: Int
+    pri end_val: Int
+    pri step_val: Int
+    pri cached_size: Int = -1
 
     pub setup(start: Int, end: Int, step?: Int = 1) {
         assert(step != 0, "Range step cannot be zero")
-        this.startVal = start
-        this.endVal = end
-        this.stepVal = step
+        this.start_val = start
+        this.end_val = end
+        this.step_val = step
     }
 
     pub start(): Int {
-        return this.startVal
+        return this.start_val
     }
 
     pub end(): Int {
-        return this.endVal
+        return this.end_val
     }
 
     pub step(): Int {
-        return this.stepVal
+        return this.step_val
     }
 
     pub contains(n: Int): Bool {
-        if (this.stepVal > 0) {
-            return n >= this.startVal && n < this.endVal && (n - this.startVal) % this.stepVal == 0
+        if (this.step_val > 0) {
+            return n >= this.start_val && n < this.end_val && (n - this.start_val) % this.step_val == 0
         }
-        return n <= this.startVal && n > this.endVal && (this.startVal - n) % (-this.stepVal) == 0
+        return n <= this.start_val && n > this.end_val && (this.start_val - n) % (-this.step_val) == 0
     }
 
-    pub toList(): List {
+    pub to_list(): List {
         result: List = List()
-        if (this.stepVal > 0) {
-            i: Int = this.startVal
+        if (this.step_val > 0) {
+            i: Int = this.start_val
             loop {
-                if (i >= this.endVal) break
+                if (i >= this.end_val) break
                 result.add(i)
-                i += this.stepVal
+                i += this.step_val
             }
         } else {
-            i: Int = this.startVal
+            i: Int = this.start_val
             loop {
-                if (i <= this.endVal) break
+                if (i <= this.end_val) break
                 result.add(i)
-                i += this.stepVal
+                i += this.step_val
             }
         }
         return result
     }
 
     pub size(): Int {
-        if (this.cachedSize >= 0) {
-            return this.cachedSize
+        if (this.cached_size >= 0) {
+            return this.cached_size
         }
 
-        if (this.stepVal > 0) {
-            if (this.startVal >= this.endVal) {
-                this.cachedSize = 0
+        if (this.step_val > 0) {
+            if (this.start_val >= this.end_val) {
+                this.cached_size = 0
             } else {
-                this.cachedSize = (this.endVal - this.startVal + this.stepVal - 1) / this.stepVal
+                this.cached_size = (this.end_val - this.start_val + this.step_val - 1) / this.step_val
             }
         } else {
-            if (this.startVal <= this.endVal) {
-                this.cachedSize = 0
+            if (this.start_val <= this.end_val) {
+                this.cached_size = 0
             } else {
-                this.cachedSize = (this.startVal - this.endVal - this.stepVal - 1) / (-this.stepVal)
+                this.cached_size = (this.start_val - this.end_val - this.step_val - 1) / (-this.step_val)
             }
         }
-        return this.cachedSize
+        return this.cached_size
     }
 
-    pub isEmpty(): Bool {
-        if (this.stepVal > 0) {
-            return this.startVal >= this.endVal
+    pub is_empty(): Bool {
+        if (this.step_val > 0) {
+            return this.start_val >= this.end_val
         }
-        return this.startVal <= this.endVal
+        return this.start_val <= this.end_val
     }
 
     pub first(): R<Int, Str> {
-        if (this.isEmpty()) {
+        if (this.is_empty()) {
             return Err("Range is empty")
         }
-        return Ok(this.startVal)
+        return Ok(this.start_val)
     }
 
     pub last(): R<Int, Str> {
-        if (this.isEmpty()) {
+        if (this.is_empty()) {
             return Err("Range is empty")
         }
-        if (this.stepVal > 0) {
-            remainder: Int = (this.endVal - this.startVal) % this.stepVal
+        if (this.step_val > 0) {
+            remainder: Int = (this.end_val - this.start_val) % this.step_val
             if (remainder == 0) {
-                return Ok(this.endVal - this.stepVal)
+                return Ok(this.end_val - this.step_val)
             }
-            return Ok(this.endVal - remainder)
+            return Ok(this.end_val - remainder)
         } else {
-            remainder: Int = (this.startVal - this.endVal) % (-this.stepVal)
+            remainder: Int = (this.start_val - this.end_val) % (-this.step_val)
             if (remainder == 0) {
-                return Ok(this.endVal - this.stepVal)
+                return Ok(this.end_val - this.step_val)
             }
-            return Ok(this.endVal + remainder)
+            return Ok(this.end_val + remainder)
         }
     }
 
     pub reversed(): Range {
-        if (this.isEmpty()) {
-            return Range(this.startVal, this.endVal, this.stepVal)
+        if (this.is_empty()) {
+            return Range(this.start_val, this.end_val, this.step_val)
         }
-        lastVal: Int = unwrap(this.last())
-        return Range(lastVal, this.startVal - this.stepVal, -this.stepVal)
+        last_val: Int = unwrap(this.last())
+        return Range(last_val, this.start_val - this.step_val, -this.step_val)
     }
 }
 
@@ -241,7 +241,7 @@ pub range(start: Int, end: Int, step?: Int = 1): Range {
     return r
 }
 
-pub rangeTo(end: Int): Range {
+pub range_to(end: Int): Range {
     r: Range = Range()
     r.setup(0, end, 1)
     return r
@@ -249,61 +249,61 @@ pub rangeTo(end: Int): Range {
 
 pub Optional {
     pri value: Any
-    pri hasValue: Bool
+    pri has_value: Bool
 
-    pub setup(val?: Any = null, hasVal?: Bool = false) {
+    pub setup(val?: Any = null, has_val?: Bool = false) {
         this.value = val
-        this.hasValue = hasVal
+        this.has_value = has_val
     }
 
-    pub isSome(): Bool {
-        return this.hasValue
+    pub is_some(): Bool {
+        return this.has_value
     }
 
-    pub isNone(): Bool {
-        return !this.hasValue
+    pub is_none(): Bool {
+        return !this.has_value
     }
 
     pub get(): Any {
-        if (!this.hasValue) {
+        if (!this.has_value) {
             panic("Called get on None")
         }
         return this.value
     }
 
-    pub getOr(default: Any): Any {
-        if (this.hasValue) {
+    pub get_or(default: Any): Any {
+        if (this.has_value) {
             return this.value
         }
         return default
     }
 
-    pub getOrElse(fn: Function): Any {
-        if (this.hasValue) {
+    pub get_or_else(fn: Function): Any {
+        if (this.has_value) {
             return this.value
         }
         return fn()
     }
 
     pub map(fn: Function): Optional {
-        if (this.hasValue) {
+        if (this.has_value) {
             return Optional.some(fn(this.value))
         }
         return Optional.none()
     }
 
     pub filter(fn: Function): Optional {
-        if (this.hasValue && fn(this.value)) {
+        if (this.has_value && fn(this.value)) {
             return this
         }
         return Optional.none()
     }
 
-    pub toResult(errMsg?: Str = "Optional is None"): Any {
-        if (this.hasValue) {
+    pub to_result(err_msg?: Str = "Optional is None"): Any {
+        if (this.has_value) {
             return Ok(this.value)
         }
-        return Err(errMsg)
+        return Err(err_msg)
     }
 }
 
@@ -321,10 +321,10 @@ pub cmp(a, b): Int {
     return 0
 }
 
-pub isBetween(n, low, high): Bool {
+pub is_between(n, low, high): Bool {
     return n >= low && n <= high
 }
 
-pub inRange(n: Int, r: Range): Bool {
+pub in_range(n: Int, r: Range): Bool {
     return r.contains(n)
 }

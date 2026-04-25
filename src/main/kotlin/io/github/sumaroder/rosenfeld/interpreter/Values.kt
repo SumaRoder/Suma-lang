@@ -50,12 +50,12 @@ data class StringValue(val value: String) : RosenfeldValue() {
         "trim" -> NativeMethod("trim", 0) { _, receiver, _ ->
             StringValue((receiver as StringValue).value.trim())
         }
-        "startsWith" -> NativeMethod("startsWith", 1) { _, receiver, args ->
+        "startswith" -> NativeMethod("startswith", 1) { _, receiver, args ->
             val str = (receiver as StringValue).value
             val prefix = (args[0] as StringValue).value
             BoolValue(str.startsWith(prefix))
         }
-        "endsWith" -> NativeMethod("endsWith", 1) { _, receiver, args ->
+        "endswith" -> NativeMethod("endswith", 1) { _, receiver, args ->
             val str = (receiver as StringValue).value
             val suffix = (args[0] as StringValue).value
             BoolValue(str.endsWith(suffix))
@@ -76,13 +76,13 @@ data class StringValue(val value: String) : RosenfeldValue() {
             val newStr = (args[1] as StringValue).value
             StringValue(str.replace(oldStr, newStr))
         }
-        "toUpper" -> NativeMethod("toUpper", 0) { _, receiver, _ ->
+        "upper" -> NativeMethod("upper", 0) { _, receiver, _ ->
             StringValue((receiver as StringValue).value.uppercase())
         }
-        "toLower" -> NativeMethod("toLower", 0) { _, receiver, _ ->
+        "lower" -> NativeMethod("lower", 0) { _, receiver, _ ->
             StringValue((receiver as StringValue).value.lowercase())
         }
-        "substring" -> NativeMethod("substring", 2) { _, receiver, args ->
+        "substr" -> NativeMethod("substr", 2) { _, receiver, args ->
             val str = (receiver as StringValue).value
             val start = (args[0] as IntValue).value.toInt()
             val end = (args[1] as IntValue).value.toInt()
@@ -159,7 +159,7 @@ data class InstanceValue(
 
         clazz.methods[name]?.let { return it.bind(this) }
 
-        throw RuntimeException("Undefined property '$name' on ${clazz.name}")
+        throw RuntimeException("undefined property '$name' on ${clazz.name}")
     }
 
     fun set(name: String, value: RosenfeldValue, interpreter: Interpreter) {
@@ -204,14 +204,33 @@ data class ListValue(
             val removed = list.remove(args[0])
             BoolValue(removed)
         }
-        "removeAt" -> NativeMethod("removeAt", 1) { _, receiver, args ->
+        "erase" -> NativeMethod("erase") { _, receiver, args ->
+            
             val list = (receiver as ListValue).elements
-            val index = (args[0] as IntValue).value.toInt()
-            if (index < 0 || index >= list.size) {
-                throw RuntimeException("Index out of bounds: $index")
+            when (args.size) {
+                1 -> {
+                    val pos = (args[0] as IntValue).value.toInt()
+                    if (pos < 0 || pos >= list.size) {
+                        throw RuntimeException("index out of bounds: $pos")
+                    }
+                    list.removeAt(pos)
+                    if (pos < list.size) list[pos] else NullValue
+                }
+                2 -> {
+                    val first = (args[0] as IntValue).value.toInt()
+                    val last = (args[1] as IntValue).value.toInt()
+                    
+                    if (first < 0 || first > list.size) throw RuntimeException("index out of bounds: $first")
+                    if (last < 0 || last > list.size) throw RuntimeException("index out of bounds: $last")
+                    if (first > last) throw RuntimeException("erase first > last")
+                    
+                    val count = last - first
+                    repeat(count) { list.removeAt(first) }
+                    
+                    if (first < list.size) list[first] else NullValue
+                }
+                else -> throw RuntimeException("no matching erase overload")
             }
-            list.removeAt(index)
-            NullValue
         }
         "get" -> NativeMethod("get", 1) { _, receiver, args ->
             val list = (receiver as ListValue).elements
@@ -225,10 +244,10 @@ data class ListValue(
             (receiver as ListValue).elements.clear()
             NullValue
         }
-        "contains" -> NativeMethod("contains", 1) { _, receiver, args ->
+        "has" -> NativeMethod("has", 1) { _, receiver, args ->
             BoolValue((receiver as ListValue).elements.contains(args[0]))
         }
-        "indexOf" -> NativeMethod("indexOf", 1) { _, receiver, args ->
+        "find" -> NativeMethod("find", 1) { _, receiver, args ->
             val index = (receiver as ListValue).elements.indexOf(args[0])
             IntValue(index.toLong())
         }

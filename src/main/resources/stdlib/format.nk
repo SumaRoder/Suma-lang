@@ -1,92 +1,92 @@
-pub padLeft(s: Str, width: Int, pad?: Str = " "): Str {
+pub pad_left(s: Str, width: Int, pad?: Str = " "): Str {
     if (s.size >= width) return s
-    padCount: Int = width - s.size
-    padLen: Int = pad.size
-    if (padLen == 0) return s
+    pad_count: Int = width - s.size
+    pad_len: Int = pad.size
+    if (pad_len == 0) return s
 
     result: Str = ""
     i: Int = 0
     loop {
-        if (i >= padCount) break
-        result = result + pad[i % padLen]
+        if (i >= pad_count) break
+        result = result + pad[i % pad_len]
         i += 1
     }
     return result + s
 }
 
-pub padRight(s: Str, width: Int, pad?: Str = " "): Str {
+pub pad_right(s: Str, width: Int, pad?: Str = " "): Str {
     if (s.size >= width) return s
-    padCount: Int = width - s.size
-    padLen: Int = pad.size
-    if (padLen == 0) return s
+    pad_count: Int = width - s.size
+    pad_len: Int = pad.size
+    if (pad_len == 0) return s
 
     result: Str = s
     i: Int = 0
     loop {
-        if (i >= padCount) break
-        result = result + pad[i % padLen]
+        if (i >= pad_count) break
+        result = result + pad[i % pad_len]
         i += 1
     }
     return result
 }
 
-pub padCenter(s: Str, width: Int, pad?: Str = " "): Str {
+pub pad_center(s: Str, width: Int, pad?: Str = " "): Str {
     if (s.size >= width) return s
-    totalPad: Int = width - s.size
-    leftPad: Int = totalPad / 2
-    rightPad: Int = totalPad - leftPad
+    total_pad: Int = width - s.size
+    left_pad: Int = total_pad / 2
+    right_pad: Int = total_pad - left_pad
 
-    padLen: Int = pad.size
-    if (padLen == 0) return s
+    pad_len: Int = pad.size
+    if (pad_len == 0) return s
 
     result: Str = ""
     i: Int = 0
     loop {
-        if (i >= leftPad) break
-        result = result + pad[i % padLen]
+        if (i >= left_pad) break
+        result = result + pad[i % pad_len]
         i += 1
     }
     result = result + s
     i = 0
     loop {
-        if (i >= rightPad) break
-        result = result + pad[i % padLen]
+        if (i >= right_pad) break
+        result = result + pad[i % pad_len]
         i += 1
     }
     return result
 }
 
-pub pad(s: Str, width: Int, align?: Str = "left", padChar?: Str = " "): Str {
-    if (align == "left") return padRight(s, width, padChar)
-    if (align == "right") return padLeft(s, width, padChar)
-    if (align == "center") return padCenter(s, width, padChar)
+pub pad(s: Str, width: Int, align?: Str = "left", padChar?: Str = " ") {
+    if (align == "left") return pad_right(s, width, padChar)
+    if (align == "right") return pad_left(s, width, padChar)
+    if (align == "center") return pad_center(s, width, padChar)
     return s
 }
 
-pub intToStr(n: Int, width?: Int = 0, padZero?: Bool = true): Str {
+pub int_to_str(n: Int, width?: Int = 0, padZero?: Bool = true): Str {
     neg: Bool = n < 0
     s: Str = Str(abs(n))
     if (width > 0 && s.size < width) {
-        padChar: Str = "0"
-        if (!padZero) { padChar = " " }
+        pad_char: Str = "0"
+        if (!padZero) { pad_char = " " }
         if (neg) {
-            return "-" + padLeft(s, width - 1, padChar)
+            return "-" + pad_left(s, width - 1, pad_char)
         }
-        return padLeft(s, width, padChar)
+        return pad_left(s, width, pad_char)
     }
     if (neg) return "-" + s
     return s
 }
 
-pub intToStrSigned(n: Int, width?: Int = 0): Str {
+pub int_to_str_signed(n: Int, width?: Int = 0): Str {
     sign: Str = "-"
     if (n >= 0) { sign = "+" }
-    newWidth: Int = 0
-    if (width > 0) { newWidth = width - 1 }
-    return sign + intToStr(abs(n), newWidth)
+    new_width: Int = 0
+    if (width > 0) { new_width = width - 1 }
+    return sign + int_to_str(abs(n), new_width)
 }
 
-pub intWithCommas(n: Int): Str {
+pub int_with_commas(n: Int): Str {
     if (n == 0) return "0"
     neg: Bool = n < 0
     s: Str = Str(abs(n))
@@ -106,22 +106,22 @@ pub intWithCommas(n: Int): Str {
     return result
 }
 
-pub formatPercent(n: Int, decimals?: Int = 0): Str {
+pub format_percent(n: Int, decimals?: Int = 0): Str {
     if (decimals == 0) return Str(n) + "%"
 
     factor: Int = pow10(decimals)
-    intPart: Int = n
-    fracPart: Int = 0
+    int_part: Int = n
+    frac_part: Int = 0
 
-    result: Str = Str(intPart) + "."
-    fracStr: Str = Str(fracPart)
-    i: Int = fracStr.size
+    result: Str = Str(int_part) + "."
+    frac_str: Str = Str(frac_part)
+    i: Int = frac_str.size
     loop {
         if (i >= decimals) break
         result = result + "0"
         i += 1
     }
-    result = result + fracStr
+    result = result + frac_str
     return result + "%"
 }
 
@@ -209,7 +209,7 @@ pub base(n: Int, b: Int): Str {
     return result
 }
 
-pub parseInt(s: Str, base?: Int = 10): Any {
+pub parse_int(s: Str, base?: Int = 10): Any {
     if (base < 2 || base > 36) return Err("Invalid base: " + Str(base))
 
     s = trim(s)
@@ -218,9 +218,9 @@ pub parseInt(s: Str, base?: Int = 10): Any {
     neg: Bool = false
     if (s[0] == "-") {
         neg = true
-        s = sliceStr(s, 1, s.size)
+        s = slice_str(s, 1, s.size)
     } else if (s[0] == "+") {
-        s = sliceStr(s, 1, s.size)
+        s = slice_str(s, 1, s.size)
     }
 
     result: Int = 0
@@ -231,9 +231,9 @@ pub parseInt(s: Str, base?: Int = 10): Any {
         digit: Int = -1
 
         if (ch >= "0" && ch <= "9") {
-            digit = charToInt(ch)
+            digit = char_to_int(ch)
         } else if (ch >= "a" && ch <= "z") {
-            digit = 10 + charToInt(ch) - charToInt("a")
+            digit = 10 + char_to_int(ch) - char_to_int("a")
         }
 
         if (digit < 0 || digit >= base) {
@@ -265,7 +265,7 @@ pub format(template: Str, args: List): Str {
                 }
                 i += 2
             } else if (template[i + 1] >= "0" && template[i + 1] <= "9") {
-                idx: Int = charToInt(template[i + 1])
+                idx: Int = char_to_int(template[i + 1])
                 if (i + 2 < template.size && template[i + 2] == "}") {
                     if (idx < args.size) {
                         result = result + Str(args[idx])
@@ -311,16 +311,118 @@ pub truncate(s: Str, maxLen: Int, suffix?: Str = "...", wordBoundary?: Bool = fa
     if (s.size <= maxLen) return s
 
     if (wordBoundary) {
-        endPos: Int = maxLen - suffix.size
-        while (endPos > 0 && s[endPos] != " " && s[endPos] != "\t" && s[endPos] != "\n") {
-            endPos -= 1
+        end_pos: Int = maxLen - suffix.size
+        while (end_pos > 0 && s[end_pos] != " " && s[end_pos] != "\t" && s[end_pos] != "\n") {
+            end_pos -= 1
         }
-        if (endPos > 0) {
-            return sliceStr(s, 0, endPos) + suffix
+        if (end_pos > 0) {
+            return slice_str(s, 0, end_pos) + suffix
         }
     }
 
-    return sliceStr(s, 0, maxLen - suffix.size) + suffix
+    return slice_str(s, 0, maxLen - suffix.size) + suffix
+}
+
+pub lines(s: Str): List {
+    result: List = List()
+    if (s.size == 0) {
+        result.add("")
+        return result
+    }
+
+    current: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= s.size) break
+        ch: Str = s[i]
+        if (ch == "\n") {
+            result.add(current)
+            current = ""
+        } else if (ch != "\r") {
+            current = current + ch
+        }
+        i += 1
+    }
+    result.add(current)
+    return result
+}
+
+pub words(s: Str): List {
+    result: List = List()
+    current: Str = ""
+    i: Int = 0
+    in_word: Bool = false
+
+    loop {
+        if (i >= s.size) break
+        ch: Str = s[i]
+        if (ch == " " || ch == "\t" || ch == "\n" || ch == "\r") {
+            if (in_word) {
+                result.add(current)
+                current = ""
+                in_word = false
+            }
+        } else {
+            current = current + ch
+            in_word = true
+        }
+        i += 1
+    }
+
+    if (in_word) {
+        result.add(current)
+    }
+    return result
+}
+
+pub repeat_str(s: Str, n: Int): Str {
+    result: Str = ""
+    i: Int = 0
+    loop {
+        if (i >= n) break
+        result = result + s
+        i += 1
+    }
+    return result
+}
+
+pub justify(s: Str, width: Int, align?: Str = "left"): Str {
+    if (s.size >= width) return s
+
+    if (align == "left") {
+        return pad_right(s, width, " ")
+    } else if (align == "right") {
+        return pad_left(s, width, " ")
+    } else if (align == "center") {
+        return pad_center(s, width, " ")
+    } else if (align == "justify") {
+        ws: List = words(s)
+        if (ws.size <= 1) return pad_right(s, width, " ")
+
+        total_spaces: Int = width - s.size + (ws.size - 1)
+        space_per_gap: Int = total_spaces / (ws.size - 1)
+        extra_spaces: Int = total_spaces % (ws.size - 1)
+
+        result: Str = ""
+        i: Int = 0
+        loop {
+            if (i >= ws.size) break
+            result = result + ws[i]
+            if (i < ws.size - 1) {
+                spaces: Int = space_per_gap
+                if (i < extra_spaces) { spaces = spaces + 1 }
+                j: Int = 0
+                loop {
+                    if (j >= spaces) break
+                    result = result + " "
+                    j += 1
+                }
+            }
+            i += 1
+        }
+        return result
+    }
+    return s
 }
 
 pub lines(s: Str): List {
@@ -375,7 +477,7 @@ pub words(s: Str): List {
     return result
 }
 
-pub repeatStr(s: Str, n: Int): Str {
+pub repeat_str(s: Str, n: Int): Str {
     result: Str = ""
     i: Int = 0
     loop {
@@ -390,14 +492,14 @@ pub justify(s: Str, width: Int, align?: Str = "left"): Str {
     if (s.size >= width) return s
 
     if (align == "left") {
-        return padRight(s, width, " ")
+        return pad_right(s, width, " ")
     } else if (align == "right") {
-        return padLeft(s, width, " ")
+        return pad_left(s, width, " ")
     } else if (align == "center") {
-        return padCenter(s, width, " ")
+        return pad_center(s, width, " ")
     } else if (align == "justify") {
         ws: List = words(s)
-        if (ws.size <= 1) return padRight(s, width, " ")
+        if (ws.size <= 1) return pad_right(s, width, " ")
 
         totalSpaces: Int = width - s.size + (ws.size - 1)
         spacePerGap: Int = totalSpaces / (ws.size - 1)
@@ -459,10 +561,10 @@ pri trim(s: Str): Str {
         end -= 1
     }
 
-    return sliceStr(s, start, end)
+    return slice_str(s, start, end)
 }
 
-pri sliceStr(s: Str, start: Int, end: Int): Str {
+pri slice_str(s: Str, start: Int, end: Int): Str {
     result: Str = ""
     i: Int = start
     loop {
@@ -480,7 +582,7 @@ pri lower(s: Str): Str {
         if (i >= s.size) break
         ch: Str = s[i]
         if (ch >= "A" && ch <= "Z") {
-            result = result + Str(charFromInt(charToInt(ch) + 32))
+            result = result + Str(char_from_int(char_to_int(ch) + 32))
         } else {
             result = result + ch
         }
@@ -489,11 +591,11 @@ pri lower(s: Str): Str {
     return result
 }
 
-pri charToInt(ch: Str): Int {
+pri char_to_int(ch: Str): Int {
     if (ch.size == 0) return 0
     return ch[0] as Int
 }
 
-pri charFromInt(n: Int): Str {
+pri char_from_int(n: Int): Str {
     return Str(n)
 }

@@ -1,0 +1,12 @@
+
+
+pub main(): Int {
+    h = List(1, 2, 3, 4, 5)
+    h.erase(1)
+    print(h)
+    h.erase(1, 2)
+    print(h)
+    h.clear()
+    print(h)
+    return 0
+}

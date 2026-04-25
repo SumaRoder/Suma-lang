@@ -6,154 +6,156 @@ import "format.nk"
 import "time.nk"
 import "assert.nk"
 
-pub testMath() {
-    assertEq(abs(-5), 5, "abs test")
+pub test_math() {
+    assert_eq(abs(-5), 5, "abs test")
     print("abs")
-    assertEq(max(3, 7), 7, "max test")
+    assert_eq(max(3, 7), 7, "max test")
     print("max")
-    assertEq(min(3, 7), 3, "min test")
+    assert_eq(min(3, 7), 3, "min test")
     print("min")
-    assertEq(pow(2, 3), 8, "pow test")
+    assert_eq(pow(2, 3), 8, "pow test")
     print("pow")
-    assertEq(clamp(5, 0, 10), 5, "clamp in range")
+    assert_eq(clamp(5, 0, 10), 5, "clamp in range")
     print("cir")
-    assertEq(gcd(12, 8), 4, "gcd test")
+    assert_eq(gcd(12, 8), 4, "gcd test")
     print("gcd")
-    assertEq(lcm(4, 6), 12, "lcm test")
+    assert_eq(lcm(4, 6), 12, "lcm test")
     print("lcm")
 
     numbers: List = List(1, 2, 3, 4, 5)
-    assertEq(sum(numbers), 15, "sum test")
+    assert_eq(sum(numbers), 15, "sum test")
     print("sum")
 
-    maxResult: Any = maxInList(numbers)
-    assertOk(maxResult, "maxInList should be Ok")
+    max_result: Any = max_in_list(numbers)
+    assert_ok(max_result, "max_in_list should be Ok")
     print("mil")
 
-    minResult: Any = minInList(numbers)
-    assertOk(minResult, "minInList should be Ok")
+    min_result: Any = min_in_list(numbers)
+    assert_ok(min_result, "min_in_list should be Ok")
     print("mil2")
 
     print("  Math tests passed")
 }
 
-pub testCollections() {
+pub test_collections() {
     stack: Stack = Stack()
     stack.setup()
-    assertTrue(stack.isEmpty(), "new stack should be empty")
+    assert_true(stack.empty(), "new stack should be empty")
 
     stack.push(1)
     stack.push(2)
     stack.push(3)
-    assertEq(stack.size(), 3, "stack size after push")
+    assert_eq(stack.size(), 3, "stack size after push")
 
-    popResult: Any = stack.pop()
-    assertOk(popResult, "pop should succeed")
-    assertEq(stack.size(), 2, "stack size after pop")
+    pop_result: Any = stack.pop()
+    assert_ok(pop_result, "pop should succeed")
+    assert_eq(stack.size(), 2, "stack size after pop")
 
     queue: Queue = Queue()
     queue.setup()
     queue.enqueue("a")
     queue.enqueue("b")
-    assertEq(queue.size(), 2, "queue size")
+    assert_eq(queue.size(), 2, "queue size")
 
     set: Set = Set()
     set.setup()
     set.add(1)
     set.add(2)
     set.add(1)
-    assertEq(set.size(), 2, "set size (no duplicates)")
-    assertTrue(set.contains(1), "set contains 1")
+    assert_eq(set.size(), 2, "set size (no duplicates)")
+    assert_true(set.contains(1), "set contains 1")
 
     map: HashMap = HashMap()
     map.setup()
     map.put("key1", "value1")
-    assertEq(map.size(), 1, "map size")
-    assertTrue(map.contains("key1"), "map contains key1")
+    assert_eq(map.size(), 1, "map size")
+    assert_true(map.contains("key1"), "map contains key1")
 
     print("  Collections tests passed")
 }
 
-pub testListFunctions() {
+pub test_list_functions() {
     numbers: List = List(1, 2, 3, 4, 5)
 
     taken: List = take(numbers, 3)
-    assertEq(taken.size, 3, "take 3")
+    assert_eq(taken.size, 3, "take 3")
     print("take")
 
     dropped: List = drop(numbers, 2)
-    assertEq(dropped.size, 3, "drop 2")
+    assert_eq(dropped.size, 3, "drop 2")
     print("drop")
 
     dups: List = List(1, 2, 2, 3, 3, 3)
     uniq: List = distinct(dups)
-    assertEq(uniq.size, 3, "distinct")
+    assert_eq(uniq.size, 3, "distinct")
     print("distinct")
 
     print("  List function tests passed")
 }
 
-pub testCore() {
-    okResult: Any = Ok(42)
-    assertTrue(isOk(okResult), "isOk test")
+pub test_core() {
+    ok_result: Any = Ok(42)
+    assert_true(is_ok(ok_result), "is_ok test")
     print("isOk")
-    assertFalse(isErr(okResult), "isErr test")
+    assert_false(is_err(ok_result), "is_err test")
     print("isErr")
 
-    unwrapped: Any = unwrapOr(okResult, 0)
-    assertEq(unwrapped, 42, "unwrapOr with Ok")
-    print("unwarpOr Ok")
+    unwrapped: Any = unwrap_or(ok_result, 0)
+    assert_eq(unwrapped, 42, "unwrap_or with Ok")
+    print("unwarp_or Ok")
 
-    errResult: Any = Err("error")
-    unwrappedErr: Any = unwrapOr(errResult, 999)
-    assertEq(unwrappedErr, 999, "unwrapOr with Err")
-    print("unwrapOr Err")
+    err_result: Any = Err("error")
+    unwrapped_err: Any = unwrap_or(err_result, 999)
+    assert_eq(unwrapped_err, 999, "unwrap_or with Err")
+    print("unwrap_or Err")
 
     r: Range = Range()
     r.setup(0, 5, 1)
-    assertEq(r.size(), 5, "range size")
+    assert_eq(r.size(), 5, "range size")
     print("range")
-    assertTrue(r.contains(3), "range contains 3")
-    assertFalse(r.contains(5), "range does not contain 5")
+    assert_true(r.contains(3), "range contains 3")
+    assert_false(r.contains(5), "range does not contain 5")
     print("range contains")
 
     p: Pair = Pair()
     print("pair")
     p.setup("hello", 42)
     print("setup")
-    assertEq(p.first(), "hello", "pair first")
+    assert_eq(p.first(), "hello", "pair first")
     print("pair1")
-    assertEq(p.second(), 42, "pair second")
+    assert_eq(p.second(), 42, "pair second")
     print("pair2")
 
     print("  Core tests passed")
 }
 
-pub testFormat() {
-    padded: Str = padLeft("hi", 5, "0")
-    assertEq(padded, "000hi", "padLeft")
+pub test_format() {
+    padded: Str = pad_left("hi", 5, "0")
+    assert_eq(padded, "000hi", "pad_left")
 
-    padded = padRight("hi", 5, "-")
-    assertEq(padded, "hi---", "padRight")
+    padded = pad_right("hi", 5, "-")
+    assert_eq(padded, "hi---", "pad_right")
 
-    hexStr: Str = hex(255)
-    assertEq(hexStr, "ff", "hex")
+    hex_str: Str = hex(255)
+    assert_eq(hex_str, "ff", "hex")
 
-    binStr: Str = binary(5)
-    assertEq(binStr, "101", "binary")
+    bin_str: Str = binary(5)
+    assert_eq(bin_str, "101", "binary")
 
     print("  Format tests passed")
 }
 
-pub testTime() {
+pub test_time() {
     rand: Random = Random()
-    rand.setup(12345)
+    rand.setup()
     r1: Int = rand.next()
     r2: Int = rand.next()
-    assertTrue(r1 != r2, "random numbers should differ")
+    assert_true(r1 != r2, "random numbers should differ")
+    print(r1, r2)
 
-    randInRange: Int = rand.nextRange(1, 10)
-    assertTrue(randInRange >= 1 && randInRange <= 10, "random in range")
+    rand_in_range: Int = rand.next_range(1, 10)
+    assert_true(rand_in_range >= 1 && rand_in_range <= 10, "random in range")
+    print(rand_in_range)
 
     print("  Time tests passed")
 }
@@ -163,22 +165,22 @@ pub main(): Int {
     print("")
 
     print("Running math tests...")
-    testMath()
+    test_math()
 
     print("Running collections tests...")
-    testCollections()
+    test_collections()
 
     print("Running list function tests...")
-    testListFunctions()
+    test_list_functions()
 
     print("Running core tests...")
-    testCore()
+    test_core()
 
     print("Running format tests...")
-    testFormat()
+    test_format()
 
     print("Running time tests...")
-    testTime()
+    test_time()
 
     print("")
     print("=== All tests passed! ===")

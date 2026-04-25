@@ -1,3 +1,4 @@
+
 pub Person {
     pri name: Str
         .getter
@@ -13,7 +14,7 @@ pub Person {
         return "Hello, I'm " + this.name + ", " + this.age + " years old"
     }
     
-    pub haveBirthday() {
+    pub add_age() {
         this.age += 1
     }
 }
@@ -29,7 +30,7 @@ pub main(): Int {
     p: Person = Person("Alice", 25)
     print(p.greet())
     
-    p.haveBirthday()
+    p.add_age()
     print("After birthday: " + p.age)
     
     result: R<Int, Str> = divide(10, 2)

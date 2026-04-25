@@ -1,78 +1,78 @@
-pub assertTrue(value: Bool, msg: Str) {
+pub assert_true(value: Bool, msg: Str) {
     if (!value) {
         panic("Assertion failed: " + msg)
     }
 }
 
-pub assertFalse(value: Bool, msg: Str) {
+pub assert_false(value: Bool, msg: Str) {
     if (value) {
         panic("Assertion failed: " + msg)
     }
 }
 
-pub assertNull(value: Any, msg: Str) {
+pub assert_null(value: Any, msg: Str) {
     if (value != null) {
         panic("Assertion failed: " + msg + " - Got: " + Str(value))
     }
 }
 
-pub assertNotNull(value: Any, msg: Str) {
+pub assert_not_null(value: Any, msg: Str) {
     if (value == null) {
         panic("Assertion failed: " + msg + " - Value is null")
     }
 }
 
-pub assertEq(actual: Any, expected: Any, msg: Str) {
+pub assert_eq(actual: Any, expected: Any, msg: Str) {
     if (actual != expected) {
         panic("Assertion failed: " + msg + " - Expected " + expected + ", got " + actual)
     }
 }
 
-pub assertNe(actual: Any, expected: Any, msg: Str) {
+pub assert_ne(actual: Any, expected: Any, msg: Str) {
     if (actual == expected) {
         panic("Assertion failed: " + msg + " - Values are equal: " + Str(actual))
     }
 }
 
-pub assertGt(a: Int, b: Int, msg: Str) {
+pub assert_gt(a: Int, b: Int, msg: Str) {
     if (!(a > b)) {
         panic("Assertion failed: " + msg + " - " + Str(a) + " is not > " + Str(b))
     }
 }
 
-pub assertLt(a: Int, b: Int, msg: Str) {
+pub assert_lt(a: Int, b: Int, msg: Str) {
     if (!(a < b)) {
         panic("Assertion failed: " + msg + " - " + Str(a) + " is not < " + Str(b))
     }
 }
 
-pub assertGe(a: Int, b: Int, msg: Str) {
+pub assert_ge(a: Int, b: Int, msg: Str) {
     if (!(a >= b)) {
         panic("Assertion failed: " + msg + " - " + Str(a) + " is not >= " + Str(b))
     }
 }
 
-pub assertLe(a: Int, b: Int, msg: Str) {
+pub assert_le(a: Int, b: Int, msg: Str) {
     if (!(a <= b)) {
         panic("Assertion failed: " + msg + " - " + Str(a) + " is not <= " + Str(b))
     }
 }
 
-pub assertOk(result: Any, msg: Str) {
+pub assert_ok(result: Any, msg: Str) {
     result -> {
         Ok {}
         Err = panic("Assertion failed: " + msg + " - Got Err: " + Str(it))
     }
 }
 
-pub assertErr(result: Any, msg: Str) {
+pub assert_err(result: Any, msg: Str) {
     result -> {
         Ok = panic("Assertion failed: " + msg + " - Got Ok: " + Str(it))
         Err {}
     }
 }
 
-pub assertContains(list: List, item: Any, msg: Str) {
+pub assert_contains(list: List, item: Any, msg: Str) {
     i: Int = 0
     found: Bool = false
     loop {
@@ -88,7 +88,7 @@ pub assertContains(list: List, item: Any, msg: Str) {
     }
 }
 
-pub assertNotContains(list: List, item: Any, msg: Str) {
+pub assert_not_contains(list: List, item: Any, msg: Str) {
     i: Int = 0
     found: Bool = false
     loop {
@@ -104,13 +104,13 @@ pub assertNotContains(list: List, item: Any, msg: Str) {
     }
 }
 
-pub assertEmpty(list: List, msg: Str) {
+pub assert_empty(list: List, msg: Str) {
     if (list.size != 0) {
         panic("Assertion failed: " + msg + " - List is not empty, size=" + Str(list.size))
     }
 }
 
-pub assertNotEmpty(list: List, msg: Str) {
+pub assert_not_empty(list: List, msg: Str) {
     if (list.size == 0) {
         panic("Assertion failed: " + msg + " - List is empty")
     }
@@ -120,6 +120,6 @@ pub fail(msg: Str) {
     panic("Test failed: " + msg)
 }
 
-pub panic(msg: Str): Any {
+pub panic(msg: Str) {
     throw(msg)
 }

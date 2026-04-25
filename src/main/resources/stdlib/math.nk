@@ -1,4 +1,4 @@
-pub idiv(a: Int, b: Int): Int {
+pub i_div(a: Int, b: Int): Int {
     result: Int = a / b
     return result
 }
@@ -33,23 +33,23 @@ pub sign(n: Int): Int {
     return 0
 }
 
-pub isEven(n: Int): Bool {
+pub is_even(n: Int): Bool {
     return n % 2 == 0
 }
 
-pub isOdd(n: Int): Bool {
+pub is_odd(n: Int): Bool {
     return n % 2 != 0
 }
 
-pub isPositive(n: Int): Bool {
+pub is_positive(n: Int): Bool {
     return n > 0
 }
 
-pub isNegative(n: Int): Bool {
+pub is_negative(n: Int): Bool {
     return n < 0
 }
 
-pub isZero(n: Int): Bool {
+pub is_zero(n: Int): Bool {
     return n == 0
 }
 
@@ -164,7 +164,7 @@ pub lcm(a: Int, b: Int): Int {
     return abs(a / gcd(a, b) * b)
 }
 
-pub isPrime(n: Int): Bool {
+pub is_prime(n: Int): Bool {
     if (n < 2) return false
     if (n == 2) return true
     if (n % 2 == 0) return false
@@ -181,21 +181,21 @@ pub isPrime(n: Int): Bool {
     return true
 }
 
-pub nextPrime(n: Int): Int {
+pub next_prime(n: Int): Int {
     if (n < 2) return 2
     candidate: Int = n + 1
     loop {
-        if (isPrime(candidate)) return candidate
+        if (is_prime(candidate)) return candidate
         candidate += 1
     }
 }
 
-pub prevPrime(n: Int): Int {
+pub prev_prime(n: Int): Int {
     if (n <= 2) return 0
     candidate: Int = n - 1
     loop {
         if (candidate < 2) return 0
-        if (isPrime(candidate)) return candidate
+        if (is_prime(candidate)) return candidate
         candidate -= 1
     }
 }
@@ -232,7 +232,7 @@ pub fibonacci(n: Int): Int {
     return b
 }
 
-pub maxInList(list: List): Any {
+pub max_in_list(list: List): Any {
     if (list.size == 0) {
         return Err("Cannot find max of empty list")
     }
@@ -248,7 +248,7 @@ pub maxInList(list: List): Any {
     return Ok(m)
 }
 
-pub minInList(list: List): Any {
+pub min_in_list(list: List): Any {
     if (list.size == 0) {
         return Err("Cannot find min of empty list")
     }
@@ -359,15 +359,15 @@ pub variance(list: List): Any {
 }
 
 
-pub PI(): Int { return 314159265 }
-pub E(): Int { return 271828182 }
-pub PHI(): Int { return 161803399 }
+pub pi(): Int { return 314159265 }
+pub e(): Int { return 271828182 }
+pub phi(): Int { return 161803399 }
 
-pub degToRad(deg: Int): Int {
+pub deg_to_rad(deg: Int): Int {
     return deg * 314159265 / 180000000
 }
 
-pub radToDeg(rad: Int): Int {
+pub rad_to_deg(rad: Int): Int {
     return rad * 180000000 / 314159265
 }
 
@@ -417,7 +417,7 @@ pub digits(n: Int): Int {
     return count
 }
 
-pub reverseDigits(n: Int): Int {
+pub reverse_digits(n: Int): Int {
     if (n == 0) return 0
     neg: Bool = n < 0
     x: Int = abs(n)
@@ -431,11 +431,11 @@ pub reverseDigits(n: Int): Int {
     return result
 }
 
-pub isPalindrome(n: Int): Bool {
-    return n == reverseDigits(n)
+pub is_palindrome(n: Int): Bool {
+    return n == reverse_digits(n)
 }
 
-pub digitSum(n: Int): Int {
+pub digit_sum(n: Int): Int {
     sum: Int = 0
     x: Int = abs(n)
     loop {

@@ -64,13 +64,13 @@ class Parser(private val tokens: List<Token>) {
                 when {
                     check(ID) && peekNext().type == LBRA -> parseClass(access.type == PUBLIC)
                     check(ID) && peekNext().type == LPAR -> parseFunction(access.type == PUBLIC)
-                    else -> error(peek().info, "Expected class or function declaration after access modifier")
+                    else -> error(peek().info, "expected class or function declaration after access modifier")
                 }
             }
             check(IMPORT) -> parseImport()
             check(ID) && peekNext().type == LPAR -> parseFunction(true)
             check(ID) && peekNext().type == LBRA -> parseClass(true)
-            else -> error(peek().info, "Expected declaration")
+            else -> error(peek().info, "expected declaration")
         }
     }
 
@@ -100,19 +100,19 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseImport(): ImportDecl {
         val info = advance().info
-        val path = expect(STRING, "Expected import path").literal!!
+        val path = expect(STRING, "expected import path").literal!!
         return ImportDecl(path, info)
     }
 
     private fun parseClass(isPublic: Boolean): ClassDecl {
-        val name = expect(ID, "Expected class name").literal!!
-        expect(LBRA, "Expected '{' after class name")
+        val name = expect(ID, "expected class name").literal!!
+        expect(LBRA, "expected '{' after class name")
 
         val members = mutableListOf<ClassMember>()
         while (!check(RBRA) && !isAtEnd()) {
             members.add(parseClassMember())
         }
-        val info = expect(RBRA, "Expected '}' after class body").info
+        val info = expect(RBRA, "expected '}' after class body").info
 
         return ClassDecl(name, isPublic, members, info)
     }
@@ -131,7 +131,7 @@ class Parser(private val tokens: List<Token>) {
             check(INIT) -> parseConstructor(isPublic)
             isMethod -> parseMethod(isPublic)
             else -> {
-                val name = expect(ID, "Expected property name").literal!!
+                val name = expect(ID, "expected property name").literal!!
                 
                 val typeAnnotation: String? = if (match(COLON)) {
                     parseTypeAnnotation()
@@ -167,7 +167,7 @@ class Parser(private val tokens: List<Token>) {
                                 SetterDecl(null, peek().info)
                             }
                         }
-                        else -> error(peek().info, "Expected 'getter' or 'setter'")
+                        else -> error(peek().info, "expected 'getter' or 'setter'")
                     }
                 }
     
@@ -186,14 +186,14 @@ class Parser(private val tokens: List<Token>) {
         } else if (check(LBRA)) {
             parseBlock()
         } else {
-            error(peek().info, "Expected '=' or '{' after constructor parameters")
+            error(peek().info, "expected '=' or '{' after constructor parameters")
         }
 
         return MethodDecl("init", params, null, body, isPublic, true, info)
     }
 
     private fun parseMethod(isPublic: Boolean): MethodDecl {
-        val name = expect(ID, "Expected method name").literal!!
+        val name = expect(ID, "expected method name").literal!!
         val params = parseParameters()
         val returnType = if (match(COLON)) {
             parseTypeAnnotation()
@@ -205,14 +205,14 @@ class Parser(private val tokens: List<Token>) {
         } else if (check(LBRA)) {
             parseBlock()
         } else {
-            error(peek().info, "Expected '=' or '{' after method signature")
+            error(peek().info, "expected '=' or '{' after method signature")
         }
 
         return MethodDecl(name, params, returnType, body, isPublic, false, peek().info)
     }
 
     private fun parseProperty(isPublic: Boolean, isConst: Boolean = false): PropertyDecl {
-        val name = expect(ID, "Expected property name").literal!!
+        val name = expect(ID, "expected property name").literal!!
     
         val typeAnnotation: String? = if (match(COLON)) {
             parseTypeAnnotation()
@@ -248,7 +248,7 @@ class Parser(private val tokens: List<Token>) {
                         SetterDecl(null, peek().info)
                     }
                 }
-                else -> error(peek().info, "Expected 'getter' or 'setter'")
+                else -> error(peek().info, "expected 'getter' or 'setter'")
             }
         }
     
@@ -260,7 +260,7 @@ class Parser(private val tokens: List<Token>) {
     }
 
     private fun parseFunction(isPublic: Boolean): FunctionDecl {
-        val name = expect(ID, "Expected function name").literal!!
+        val name = expect(ID, "expected function name").literal!!
         val params = parseParameters()
 
         val returnType = if (match(COLON)) {
@@ -273,18 +273,18 @@ class Parser(private val tokens: List<Token>) {
         } else if (check(LBRA)) {
             parseBlock()
         } else {
-            error(peek().info, "Expected '=' or '{' after function signature")
+            error(peek().info, "expected '=' or '{' after function signature")
         }
 
         return FunctionDecl(name, params, returnType, body, isPublic, peek().info)
     }
 
     private fun parseParameters(): List<Parameter> {
-        expect(LPAR, "Expected '('")
+        expect(LPAR, "expected '('")
         val params = mutableListOf<Parameter>()
 
         while (!check(RPAR) && !isAtEnd()) {
-            val name = expect(ID, "Expected parameter name").literal!!
+            val name = expect(ID, "expected parameter name").literal!!
             val isOptional = match(QUEST)
             val typeAnnotation = if (match(COLON)) parseTypeAnnotation() else null
             val defaultValue = if (match(ASSIGN)) parseExpression() else null
@@ -294,7 +294,7 @@ class Parser(private val tokens: List<Token>) {
             if (!match(COMMA)) break
         }
 
-        expect(RPAR, "Expected ')'")
+        expect(RPAR, "expected ')'")
         return params
     }
 
@@ -308,7 +308,7 @@ class Parser(private val tokens: List<Token>) {
                     sb.append(parseTypeAnnotation())
                     if (match(COMMA)) sb.append(", ")
                 }
-                expect(GT, "Expected '>'")
+                expect(GT, "expected '>'")
                 sb.append(">")
             }
         }
@@ -334,7 +334,7 @@ class Parser(private val tokens: List<Token>) {
             while (!check(RBRA) && !isAtEnd()) {
                 statements.add(parseStatement())
             }
-            expect(RBRA, "Expected '}'")
+            expect(RBRA, "expected '}'")
             return BlockStmt(statements, info)
         }
     
@@ -440,10 +440,10 @@ class Parser(private val tokens: List<Token>) {
 
         if (match(ARROW)) {
             val branches = mutableListOf<MatchBranch>()
-            expect(LBRA, "Expected '{' after '->'")
+            expect(LBRA, "expected '{' after '->'")
 
             while (!check(RBRA) && !isAtEnd()) {
-                val pattern = expect(ID, "Expected pattern name").literal!!
+                val pattern = expect(ID, "expected pattern name").literal!!
 
                 if (check(LBRA)) {
                     val block = parseBlock()
@@ -452,11 +452,11 @@ class Parser(private val tokens: List<Token>) {
                     val body = parseExpression()
                     branches.add(MatchBranch(pattern, body, false))
                 } else {
-                    error(peek().info, "Expected '{' or '=' after pattern")
+                    error(peek().info, "expected '{' or '=' after pattern")
                 }
             }
 
-            expect(RBRA, "Expected '}' after match branches")
+            expect(RBRA, "expected '}' after match branches")
             return ArrowMatchExpr(expr, branches, expr.info)
         }
 
@@ -472,7 +472,7 @@ class Parser(private val tokens: List<Token>) {
                 expr = ElvisExpr(expr, right, expr.info)
             } else {
                 val thenExpr = parseExpression()
-                expect(COLON, "Expected ':' after '?' in conditional expression")
+                expect(COLON, "expected ':' after '?' in conditional expression")
                 val elseExpr = parseElvis()
                 expr = ConditionalExpr(expr, thenExpr, elseExpr, expr.info)
             }
@@ -617,25 +617,25 @@ class Parser(private val tokens: List<Token>) {
                         args.add(parseExpression())
                         if (!match(COMMA)) break
                     }
-                    expect(RPAR, "Expected ')'")
+                    expect(RPAR, "expected ')'")
                     CallExpr(expr, args, expr.info)
                 }
                 check(DOT) && (peekNext().type == GETTER || peekNext().type == SETTER) -> {
                     return expr
                 }
                 match(DOT) -> {
-                    val name = expect(ID, "Expected property name").literal!!
+                    val name = expect(ID, "expected property name").literal!!
                     MemberExpr(expr, name, expr.info)
                 }
                 match(LBRACK) -> {
                     val index = parseExpression()
-                    expect(RBRACK, "Expected ']'")
+                    expect(RBRACK, "expected ']'")
                     IndexExpr(expr, index, expr.info)
                 }
                 check(QUEST) && checkNext(DOT) -> {
                     advance()
                     advance()
-                    val name = expect(ID, "Expected property name").literal!!
+                    val name = expect(ID, "expected property name").literal!!
                     SafeCallExpr(expr, MemberExpr(expr, name, expr.info), expr.info)
                 }
                 else -> break
@@ -657,7 +657,7 @@ class Parser(private val tokens: List<Token>) {
             match(ID) -> Identifier(previous().literal!!, previous().info)
             match(LPAR) -> {
                 val expr = parseExpression()
-                expect(RPAR, "Expected ')'")
+                expect(RPAR, "expected ')'")
                 expr
             }
             else -> error(peek().info, "Unexpected token: ${peek().type}")

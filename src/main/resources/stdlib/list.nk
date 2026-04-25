@@ -27,7 +27,7 @@ pub drop(list: List, n: Int): List {
     return result
 }
 
-pub takeWhile(list: List, pred: Function): List {
+pub take_while(list: List, pred: Function): List {
     result: List = List()
     i: Int = 0
     loop {
@@ -39,7 +39,7 @@ pub takeWhile(list: List, pred: Function): List {
     return result
 }
 
-pub dropWhile(list: List, pred: Function): List {
+pub drop_while(list: List, pred: Function): List {
     i: Int = 0
     loop {
         if (i >= list.size) break
@@ -112,7 +112,7 @@ pub flatten(list: List): List {
     loop {
         if (i >= list.size) break
         item = list[i]
-        if (isList(item)) {
+        if (is_list(item)) {
             j: Int = 0
             loop {
                 if (j >= item.size) break
@@ -127,11 +127,11 @@ pub flatten(list: List): List {
     return result
 }
 
-pub flatMap(list: List, fn: Function): List {
+pub flat_map(list: List, fn: Function): List {
     return flatten(map(list, fn))
 }
 
-pub intersperse(list: List, sep: Any): List {
+pub inter_sperse(list: List, sep: Any): List {
     if (list.size == 0) return List()
     result: List = List()
     result.add(list[0])
@@ -211,11 +211,11 @@ pub reduce(list: List, fn: Function, initial: Any): Any {
     return result
 }
 
-pub foldLeft(list: List, fn: Function, initial: Any): Any {
+pub fold_left(list: List, fn: Function, initial: Any): Any {
     return reduce(list, fn, initial)
 }
 
-pub foldRight(list: List, fn: Function, initial: Any): Any {
+pub fold_right(list: List, fn: Function, initial: Any): Any {
     result = initial
     i: Int = list.size - 1
     loop {
@@ -226,7 +226,7 @@ pub foldRight(list: List, fn: Function, initial: Any): Any {
     return result
 }
 
-pub forEach(list: List, fn: Function) {
+pub for_each(list: List, fn: Function) {
     i: Int = 0
     loop {
         if (i >= list.size) break
@@ -235,7 +235,7 @@ pub forEach(list: List, fn: Function) {
     }
 }
 
-pub find(list: List, pred: Function): Any {
+pub find_first(list: List, pred: Function): Any {
     i: Int = 0
     loop {
         if (i >= list.size) break
@@ -247,7 +247,7 @@ pub find(list: List, pred: Function): Any {
     return Err("No element satisfies predicate")
 }
 
-pub findIndex(list: List, pred: Function): Int {
+pub find_index(list: List, pred: Function): Int {
     i: Int = 0
     loop {
         if (i >= list.size) break
@@ -295,22 +295,22 @@ pub count(list: List, pred: Function): Int {
 }
 
 pub partition(list: List, pred: Function): List {
-    trueList: List = List()
-    falseList: List = List()
+    true_list: List = List()
+    false_list: List = List()
     i: Int = 0
     loop {
         if (i >= list.size) break
         if (pred(list[i])) {
-            trueList.add(list[i])
+            true_list.add(list[i])
         } else {
-            falseList.add(list[i])
+            false_list.add(list[i])
         }
         i += 1
     }
-    return List(trueList, falseList)
+    return List(true_list, false_list)
 }
 
-pub groupBy(list: List, fn: Function): Any {
+pub group_by(list: List, fn: Function): Any {
     result: List = List()
     keys: List = List()
     i: Int = 0
@@ -342,10 +342,10 @@ pub groupBy(list: List, fn: Function): Any {
 }
 
 pub contains(list: List, value: Any): Bool {
-    return indexOf(list, value) >= 0
+    return find(list, value) >= 0
 }
 
-pub indexOf(list: List, value: Any): Int {
+pub find(list: List, value: Any): Int {
     i: Int = 0
     loop {
         if (i >= list.size) break
@@ -357,7 +357,7 @@ pub indexOf(list: List, value: Any): Int {
     return -1
 }
 
-pub lastIndexOf(list: List, value: Any): Int {
+pub find_last(list: List, value: Any): Int {
     i: Int = list.size - 1
     loop {
         if (i < 0) break
@@ -396,26 +396,26 @@ pub sort(list: List): List {
     i: Int = 0
     loop {
         if (i >= result.size - 1) break
-        minIdx: Int = i
+        min_idx: Int = i
         j: Int = i + 1
         loop {
             if (j >= result.size) break
-            if (result[j] < result[minIdx]) {
-                minIdx = j
+            if (result[j] < result[min_idx]) {
+                min_idx = j
             }
             j += 1
         }
-        if (minIdx != i) {
+        if (min_idx != i) {
             temp = result[i]
-            result[i] = result[minIdx]
-            result[minIdx] = temp
+            result[i] = result[min_idx]
+            result[min_idx] = temp
         }
         i += 1
     }
     return result
 }
 
-pub sortBy(list: List, fn: Function): List {
+pub sort_by(list: List, fn: Function): List {
     if (list.size <= 1) return list
     result: List = copy(list)
     keys: List = map(list, fn)
@@ -444,25 +444,11 @@ pub sortBy(list: List, fn: Function): List {
     return result
 }
 
-pub reverseSorted(list: List): List {
+pub reverse_sorted(list: List): List {
     return reverse(sort(list))
 }
 
-pub zip(list1: List, list2: List): List {
-    result: List = List()
-    len: Int = list1.size
-    if (list2.size < len) { len = list2.size }
-    i: Int = 0
-    loop {
-        if (i >= len) break
-        pair: List = List(list1[i], list2[i])
-        result.add(pair)
-        i += 1
-    }
-    return result
-}
-
-pub zipWith(list1: List, list2: List, fn: Function): List {
+pub zip_with(list1: List, list2: List, fn: Function): List {
     result: List = List()
     len: Int = list1.size
     if (list2.size < len) { len = list2.size }
@@ -519,14 +505,14 @@ pub join(list: List, sep?: Str = ","): Str {
     }
     return result
 }
-pub joinToString(list: List, sep?: Str = ", ", prefix?: Str = "", suffix?: Str = ""): Str {
+pub join_to_string(list: List, sep?: Str = ", ", prefix?: Str = "", suffix?: Str = ""): Str {
     result: Str = prefix
     result = result + join(list, sep)
     result = result + suffix
     return result
 }
 
-pub isList(value: Any): Bool {
+pub is_list(value: Any): Bool {
     return value -> {
         List = true
         _ = false
@@ -548,11 +534,11 @@ pub fill(item: Any, n: Int): List {
     return repeat(item, n)
 }
 
-pub isEmpty(list: List): Bool {
+pub empty(list: List): Bool {
     return list.size == 0
 }
 
-pub isNotEmpty(list: List): Bool {
+pub not_empty(list: List): Bool {
     return list.size > 0
 }
 
@@ -563,7 +549,7 @@ pub size(list: List): Int {
 pub clear(list: List) {
     loop {
         if (list.size == 0) break
-        list.removeAt(list.size - 1)
+        list.erase(list.size - 1)
     }
 }
 
@@ -575,7 +561,7 @@ pub tail(list: List): List {
     return drop(list, 1)
 }
 
-pub initList(list: List): List {
+pub init_list(list: List): List {
     if (list.size <= 1) return List()
     return slice(list, 0, list.size - 1)
 }
