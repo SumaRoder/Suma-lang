@@ -1,0 +1,11 @@
+import "py:examples.decorator_helpers"
+
+@decorator_helpers.trace("answer")
+@decorator_helpers.plus(10)
+pub answer(): Int {
+    return 32
+}
+
+pub main(): Int {
+    return answer()
+}

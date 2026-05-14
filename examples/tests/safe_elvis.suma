@@ -1,0 +1,15 @@
+Box {
+    value: Int
+    init(value: Int = 42) { this.value = value }
+    get(): Int { return this.value }
+}
+
+pub main(): Int {
+    box: Box = Box()
+    missing: R = Err("missing")
+    fallback: R = Err(42)
+    if (missing?.get() == null) {
+        return box?.get() + (fallback ?: 0)
+    }
+    return 0
+}

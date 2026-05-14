@@ -1,0 +1,92 @@
+pub parse_digit(ch: Str) {
+    if (ch == "0") { return Ok(0) }
+    if (ch == "1") { return Ok(1) }
+    if (ch == "2") { return Ok(2) }
+    if (ch == "3") { return Ok(3) }
+    if (ch == "4") { return Ok(4) }
+    if (ch == "5") { return Ok(5) }
+    if (ch == "6") { return Ok(6) }
+    if (ch == "7") { return Ok(7) }
+    if (ch == "8") { return Ok(8) }
+    if (ch == "9") { return Ok(9) }
+    return Err("not a digit: " + ch)
+}
+
+pub parse_three(a: Str, b: Str, c: Str) {
+    da: R = parse_digit(a)
+    db: R = parse_digit(b)
+    dc: R = parse_digit(c)
+
+    da -> {
+        Err {
+            return Err(it)
+        }
+        Ok = print("first digit = " + to_str(it))
+    }
+    db -> {
+        Err {
+            return Err(it)
+        }
+        Ok = print("second digit = " + to_str(it))
+    }
+    dc -> {
+        Err {
+            return Err(it)
+        }
+        Ok = print("third digit = " + to_str(it))
+    }
+
+    va: Int = unwrap(da)
+    vb: Int = unwrap(db)
+    vc: Int = unwrap(dc)
+    return Ok(va * 100 + vb * 10 + vc)
+}
+
+pub safe_divide(a: Int, b: Int) {
+    if (b == 0) {
+        return Err("divide by zero")
+    }
+    return Ok(a / b)
+}
+
+pub pipeline(a: Str, b: Str, c: Str, divisor: Int) {
+    parsed: R = parse_three(a, b, c)
+    parsed -> {
+        Err {
+            return Err("parse failed: " + it)
+        }
+        Ok = print("parsed number = " + to_str(it))
+    }
+
+    n: Int = unwrap(parsed)
+    divided: R = safe_divide(n, divisor)
+    divided -> {
+        Err {
+            return Err("division failed: " + it)
+        }
+        Ok = print("division result = " + to_str(it))
+    }
+    return divided
+}
+
+pub main(): Int {
+    ok_result: R = pipeline("4", "2", "0", 7)
+    ok_result -> {
+        Ok = print("pipeline ok = " + to_str(it))
+        Err = print("pipeline err = " + it)
+    }
+
+    bad_parse: R = pipeline("9", "x", "1", 3)
+    bad_parse -> {
+        Ok = print("bad parse unexpectedly ok = " + to_str(it))
+        Err = print("bad parse expected err = " + it)
+    }
+
+    bad_div: R = pipeline("1", "2", "0", 0)
+    bad_div -> {
+        Ok = print("bad div unexpectedly ok = " + to_str(it))
+        Err = print("bad div expected err = " + it)
+    }
+
+    return 0
+}

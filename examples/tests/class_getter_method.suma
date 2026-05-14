@@ -1,0 +1,19 @@
+Counter {
+    value: Int
+    doubled: Int .getter { return this.value * 2 }
+
+    init(start: Int = 20) {
+        this.value = start
+    }
+
+    add(amount: Int): Int {
+        this.value += amount
+        return this.value
+    }
+}
+
+pub main(): Int {
+    counter: Counter = Counter()
+    counter.add(1)
+    return counter.doubled
+}

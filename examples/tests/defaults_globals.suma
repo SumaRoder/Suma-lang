@@ -1,0 +1,9 @@
+seed: Int = 40
+
+pub add(value: Int, delta: Int = 2): Int {
+    return value + delta
+}
+
+pub main(): Int {
+    return add(seed)
+}

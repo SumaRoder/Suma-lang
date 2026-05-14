@@ -1,0 +1,17 @@
+pub list_total(values: List): Int {
+    total: Int = 0
+    i: Int = 0
+    loop {
+        if (i >= values.size) { break }
+        total += values[i]
+        i += 1
+    }
+    return total
+}
+
+pub main(): Int {
+    values: List = List(5, 8, 13)
+    values.add(16)
+    label: Str = "abcdef"
+    return list_total(values) + label[0].size - 1
+}

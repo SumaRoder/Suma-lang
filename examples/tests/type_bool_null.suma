@@ -1,0 +1,9 @@
+pub score(value: Any): Int {
+    if (value is Bool) { return 20 }
+    if (value == null) { return 2 }
+    return 0
+}
+
+pub main(): Int {
+    return score(true) + score(false) + score(null)
+}

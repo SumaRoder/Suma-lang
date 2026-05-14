@@ -1,0 +1,36 @@
+import "py:examples.secplugin_suma_bridge"
+
+@secplugin_suma_bridge.on_msg("ping")
+pub on_ping(messenger: PyObject): Null {
+    print("Suma handler received ping: " + to_str(messenger))
+    status: Str = secplugin_suma_bridge.send_msg(messenger, "pong from Suma-lang")
+    print("send status = " + status)
+    return null
+}
+
+pub main(): Int {
+    print("SecPlugin SDK source: " + secplugin_suma_bridge.sdk_source_path())
+    print(secplugin_suma_bridge.sdk_status())
+    print(secplugin_suma_bridge.dependency_status())
+
+    handle: Str = secplugin_suma_bridge.create_echo_plugin(
+        "ws://127.0.0.1:24804",
+        "io.github.sumaroder.secplugin",
+        "SecPlugin",
+        "SecretToken",
+        "测试",
+        "成功"
+    )
+
+    print(secplugin_suma_bridge.describe_plugin(handle))
+    print(secplugin_suma_bridge.set_local_timeout(handle, 8.0))
+
+    // 这里会进入 SecPlugin 的 WebSocket 主循环；按 Ctrl+C 退出。
+    should_run: Bool = true
+    if (should_run) {
+        print("starting SecPlugin loop...")
+        print(secplugin_suma_bridge.run_plugin(handle))
+    }
+
+    return 0
+}

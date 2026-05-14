@@ -1,0 +1,13 @@
+pub weighted_score(a: Int, b: Int, c: Int): Int {
+    return a * 3 + b * 2 + c
+}
+
+pub describe_score(score: Int): Str {
+    if (score >= 100) {
+        return "excellent"
+    }
+    if (score >= 60) {
+        return "passing"
+    }
+    return "needs-work"
+}

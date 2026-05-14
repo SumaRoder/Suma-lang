@@ -1,0 +1,87 @@
+pub gcd(a: Int, b: Int): Int {
+    x: Int = a
+    y: Int = b
+    loop {
+        if (y == 0) {
+            break
+        }
+        r: Int = x % y
+        x = y
+        y = r
+    }
+    return x
+}
+
+pub lcm(a: Int, b: Int): Int {
+    return (a / gcd(a, b)) * b
+}
+
+pub fib_iter(n: Int): Int {
+    a: Int = 0
+    b: Int = 1
+    i: Int = 0
+    loop {
+        if (i >= n) {
+            break
+        }
+        next: Int = a + b
+        a = b
+        b = next
+        i += 1
+    }
+    return a
+}
+
+pub factorial_loop(n: Int): Int {
+    result: Int = 1
+    i: Int = 2
+    loop {
+        if (i > n) {
+            break
+        }
+        result *= i
+        i += 1
+    }
+    return result
+}
+
+pub bit_mix(n: Int): Int {
+    value: Int = n
+    value = value << 2
+    value = value ^ 42
+    value = value & 255
+    value = value | 7
+    value = value >> 1
+    return value
+}
+
+pub checksum(limit: Int): Int {
+    total: Int = 0
+    i: Int = 1
+    loop {
+        if (i > limit) {
+            break
+        }
+        if (i % 2 == 0) {
+            total += gcd(i * 12, i * 18)
+        } else {
+            total += lcm(i, i + 3) % 97
+        }
+        if (i % 5 == 0) {
+            total += bit_mix(i)
+        }
+        i += 1
+    }
+    return total
+}
+
+pub main(): Int {
+    print("fib_iter(20) = " + to_str(fib_iter(20)))
+    print("factorial_loop(12) = " + to_str(factorial_loop(12)))
+    print("gcd(462, 1071) = " + to_str(gcd(462, 1071)))
+    print("lcm(21, 6) = " + to_str(lcm(21, 6)))
+    print("bit_mix(123) = " + to_str(bit_mix(123)))
+    result: Int = checksum(40)
+    print("checksum(40) = " + to_str(result))
+    return result
+}

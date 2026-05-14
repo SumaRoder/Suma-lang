@@ -1,0 +1,63 @@
+pub classify_word(word: Str): Str {
+    if (word.size == 0) {
+        return "empty"
+    }
+    if (word.size <= 3) {
+        return "short"
+    }
+    if (word.size <= 6) {
+        return "medium"
+    }
+    return "long"
+}
+
+pub join_three(a: Str, b: Str, c: Str): Str {
+    return a + "|" + b + "|" + c
+}
+
+pub list_score(items: List): Int {
+    total: Int = 0
+    i: Int = 0
+    loop {
+        if (i >= items.size) {
+            break
+        }
+        value: Int = items[i]
+        if (value % 2 == 0) {
+            total += value * 2
+        } else {
+            total += value * 3
+        }
+        i += 1
+    }
+    return total
+}
+
+pub mutate_list(): Int {
+    xs: List = List(1, 2, 3)
+    xs.add(5)
+    xs.add(8)
+    xs.add(13)
+    print("xs size = " + to_str(xs.size))
+    print("xs[0] = " + to_str(xs[0]))
+    print("xs[3] = " + to_str(xs[3]))
+    return list_score(xs)
+}
+
+pub slice_demo(s: Str): Int {
+    left: Str = s[0]
+    mid: Str = s[4]
+    right: Str = s[8]
+    print(join_three(left, mid, right))
+    return left.size + mid.size + right.size
+}
+
+pub main(): Int {
+    print("classification suma = " + classify_word("suma"))
+    print("classification language = " + classify_word("language"))
+    score: Int = mutate_list()
+    length: Int = slice_demo("abcdefghijkl")
+    print("list score = " + to_str(score))
+    print("slice length = " + to_str(length))
+    return score + length
+}

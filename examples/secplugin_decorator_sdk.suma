@@ -1,0 +1,28 @@
+import "py:examples.secplugin_suma_bridge"
+
+@secplugin_suma_bridge.on_msg("ping")
+pub on_ping(messenger: PyObject): Null {
+    print("Suma handler received ping: " + to_str(messenger))
+    status: Str = secplugin_suma_bridge.send_msg(messenger, "pong from Suma-lang")
+    print("send status = " + status)
+    return null
+}
+
+pub main(): Int {
+    print(secplugin_suma_bridge.sdk_status())
+    handle: Str = secplugin_suma_bridge.create_echo_plugin(
+        "ws://127.0.0.1:24804",
+        "io.github.sumaroder.secplugin",
+        "SecPlugin",
+        "SecretToken",
+        "测试",
+        "成功"
+    )
+    print(secplugin_suma_bridge.describe_plugin(handle))
+
+    should_run: Bool = false
+    if (should_run) {
+        print(secplugin_suma_bridge.run_plugin(handle))
+    }
+    return 0
+}

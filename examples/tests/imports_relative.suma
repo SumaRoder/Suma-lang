@@ -1,0 +1,5 @@
+import "./lib/math_helpers.suma"
+
+pub main(): Int {
+    return add_default(base_value())
+}

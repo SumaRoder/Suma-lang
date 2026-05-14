@@ -1,0 +1,33 @@
+import "core"
+import "math"
+import "list"
+import "./lib/local_stats.suma"
+
+pub main(): Int {
+    values: List = List(3, 5, 8)
+    list_push_range(values, 9, 12)
+
+    sum: Int = list_sum(values)
+    product: Int = list_product(List(2, 3, 4))
+    max_value: Int = list_max(values)
+    min_value: Int = list_min(values)
+    score: Int = weighted_score(sum, max_value, min_value)
+
+    print("sum = " + to_str(sum))
+    print("product = " + to_str(product))
+    print("max/min = " + to_str(max_value) + "/" + to_str(min_value))
+    print("fib(12) = " + to_str(fib_int(12)))
+    print("pow(3, 5) = " + to_str(pow_int(3, 5)))
+    print("gcd/lcm = " + to_str(gcd_int(84, 126)) + "/" + to_str(lcm_int(21, 6)))
+    print("clamp = " + to_str(clamp(score, 0, 100)))
+    print("repeat = " + repeat_str("ha", 3))
+    print("score class = " + describe_score(score))
+
+    positive: R = require_positive(score)
+    positive -> {
+        Ok = print("positive score = " + to_str(it))
+        Err = print("unexpected error = " + it)
+    }
+
+    return score
+}

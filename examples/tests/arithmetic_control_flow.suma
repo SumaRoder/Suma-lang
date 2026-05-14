@@ -1,0 +1,18 @@
+pub triangular(n: Int): Int {
+    total: Int = 0
+    i: Int = 1
+    loop {
+        if (i > n) { break }
+        if (i % 2 == 0) {
+            total += i * 2
+        } else {
+            total += i
+        }
+        i += 1
+    }
+    return total
+}
+
+pub main(): Int {
+    return triangular(7) + 2
+}

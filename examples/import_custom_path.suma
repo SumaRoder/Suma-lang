@@ -1,0 +1,8 @@
+import "custom_tools"
+
+pub main(): Int {
+    value: Int = triple(14)
+    print(banner("custom path"))
+    print("triple = " + to_str(value))
+    return value
+}

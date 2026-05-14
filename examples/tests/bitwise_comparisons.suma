@@ -1,0 +1,11 @@
+pub main(): Int {
+    a: Int = 6 & 3
+    b: Int = 5 | 8
+    c: Int = 7 ^ 2
+    d: Int = 1 << 4
+    e: Int = 64 >> 4
+    if (a == 2 && b == 13 && c == 5 && d == 16 && e == 4) {
+        return a + b + c + d + e + 2
+    }
+    return 0
+}

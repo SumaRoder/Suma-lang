@@ -1,0 +1,12 @@
+import "py:math"
+import "py:json"
+
+pub main(): Int {
+    root: Float = math.sqrt(81.0)
+    payload: Str = json.dumps(List(1, 2, 3))
+    data: PyObject = json.loads("{\"answer\": 9}")
+
+    print("sqrt = " + to_str(root))
+    print(payload)
+    return data.get("answer")
+}

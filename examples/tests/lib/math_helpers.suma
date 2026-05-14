@@ -1,0 +1,7 @@
+pub base_value(): Int {
+    return 40
+}
+
+pub add_default(value: Int, delta: Int = 2): Int {
+    return value + delta
+}

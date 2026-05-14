@@ -1,0 +1,17 @@
+pub parse_flag(flag: Bool) {
+    if (flag) { return Ok(40) }
+    return Err("no")
+}
+
+pub main(): Int {
+    total: Int = 0
+    parse_flag(true) -> {
+        Ok = total = total + it
+        Err = total = total - 10
+    }
+    parse_flag(false) -> {
+        Ok = total = total - 10
+        Err = total = total + it.size
+    }
+    return total
+}

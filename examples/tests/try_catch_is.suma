@@ -1,0 +1,17 @@
+pub classify(value: Any): Str {
+    if (value is Int) { return "int" }
+    if (value is Str) { return "str" }
+    return "other"
+}
+
+pub main(): Int {
+    result: Int = 0
+    try {
+        if (classify(42) == "int") {
+            throw 42
+        }
+    } catch (err) {
+        result = err
+    }
+    return result
+}

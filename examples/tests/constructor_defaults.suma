@@ -1,0 +1,11 @@
+Box {
+    value: Int
+    init(value: Int = 42) {
+        this.value = value
+    }
+}
+
+pub main(): Int {
+    box: Box = Box()
+    return box.value
+}

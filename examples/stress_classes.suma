@@ -1,0 +1,97 @@
+pub Counter {
+    pri name: Str
+    pri value: Int = 0
+    pri step: Int = 1
+
+    pub init(name: Str, start: Int, step: Int) {
+        this.name = name
+        this.value = start
+        this.step = step
+    }
+
+    pub inc(): Int {
+        this.value += this.step
+        return this.value
+    }
+
+    pub add(amount: Int): Int {
+        this.value += amount
+        return this.value
+    }
+
+    pub reset(next: Int): Int {
+        this.value = next
+        return this.value
+    }
+
+    pub label(): Str {
+        return this.name + ":" + to_str(this.value)
+    }
+}
+
+pub Accumulator {
+    pri total: Int = 0
+    pri count: Int = 0
+
+    pub init() {
+        this.total = 0
+        this.count = 0
+    }
+
+    pub push(value: Int): Int {
+        this.total += value
+        this.count += 1
+        return this.total
+    }
+
+    pub average(): Int {
+        if (this.count == 0) {
+            return 0
+        }
+        return this.total / this.count
+    }
+
+    pub describe(): Str {
+        return "total=" + to_str(this.total) + ", count=" + to_str(this.count) + ", avg=" + to_str(this.average())
+    }
+}
+
+pub run_counter(counter: Counter, rounds: Int): Int {
+    i: Int = 0
+    last: Int = 0
+    loop {
+        if (i >= rounds) {
+            break
+        }
+        if (i % 3 == 0) {
+            last = counter.inc()
+        } elif (i % 3 == 1) {
+            last = counter.add(i)
+        } else {
+            last = counter.add(2)
+        }
+        print(counter.label())
+        i += 1
+    }
+    return last
+}
+
+pub main(): Int {
+    c: Counter = Counter("primary", 10, 4)
+    last: Int = run_counter(c, 8)
+    print("last counter = " + to_str(last))
+
+    acc: Accumulator = Accumulator()
+    i: Int = 1
+    loop {
+        if (i > 10) {
+            break
+        }
+        acc.push(i * i)
+        i += 1
+    }
+    print(acc.describe())
+    c.reset(acc.average())
+    print("reset counter = " + c.label())
+    return last + acc.average()
+}

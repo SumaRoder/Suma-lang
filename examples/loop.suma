@@ -1,0 +1,11 @@
+pub main(): Int {
+    i: Int = 0
+    loop {
+        i += 1
+        if (i == 5 || i > 10) {
+            break
+        }
+        print("i = " + to_str(i))
+    }
+    return 0
+}

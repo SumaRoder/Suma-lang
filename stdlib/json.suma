@@ -1,0 +1,109 @@
+pub json_escape(s: Str): Str {
+    return s
+}
+
+pub to_json(value: Any): R {
+    return Err("to_json(Any) is not supported in static mode; use a typed to_json_* function")
+}
+
+pub json_pretty(value: Any): R {
+    return to_json(value)
+}
+
+pub to_json_str(value: Str): R {
+    return Ok("\"" + json_escape(value) + "\"")
+}
+
+pub to_json_int(value: Int): R {
+    return Ok(to_str(value))
+}
+
+pub to_json_float(value: Float): R {
+    return Ok(to_str(value))
+}
+
+pub to_json_bool(value: Bool): R {
+    if (value) {
+        return Ok("true")
+    }
+    return Ok("false")
+}
+
+pub to_json_null(): R {
+    return Ok("null")
+}
+
+pub from_json(json_str: Str): R {
+    return Ok(json_str)
+}
+
+pub JsonObject {
+    pri pairs: List = List()
+
+    pub init() {
+        this.pairs = List()
+    }
+
+    pub put(key: Str, value: Str) {
+        this.pairs.add(List(key, value))
+    }
+
+    pub get(key: Str): Str {
+        i: Int = 0
+        loop {
+            if (i >= this.pairs.size) {
+                return ""
+            }
+            pair: List = this.pairs[i]
+            if (pair[0] == key) {
+                return pair[1]
+            }
+            i += 1
+        }
+        return ""
+    }
+
+    pub keys(): List {
+        result: List = List()
+        i: Int = 0
+        loop {
+            if (i >= this.pairs.size) {
+                break
+            }
+            result.add(this.pairs[i][0])
+            i += 1
+        }
+        return result
+    }
+
+    pub has(key: Str): Bool {
+        i: Int = 0
+        loop {
+            if (i >= this.pairs.size) {
+                return false
+            }
+            if (this.pairs[i][0] == key) {
+                return true
+            }
+            i += 1
+        }
+        return false
+    }
+
+    pub size(): Int {
+        return this.pairs.size
+    }
+}
+
+pub json_object(): JsonObject {
+    return JsonObject()
+}
+
+pub json_get(obj: JsonObject, key: Str): Str {
+    return obj.get(key)
+}
+
+pub json_set(obj: JsonObject, key: Str, value: Str): JsonObject {
+    obj.put(key, value)
+    return obj
+}

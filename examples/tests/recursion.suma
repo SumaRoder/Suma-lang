@@ -1,0 +1,13 @@
+pub fib(n: Int): Int {
+    if (n <= 1) { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+pub fact(n: Int): Int {
+    if (n <= 1) { return 1 }
+    return n * fact(n - 1)
+}
+
+pub main(): Int {
+    return fib(8) + fact(4) - 3
+}
