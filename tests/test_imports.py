@@ -42,7 +42,8 @@ pub mul3(n: Int): Int {
 }
 """)
         source = f"""
-import \"{util}\"\n
+import \"{util.as_posix()}\"\n
+
 pub main(): Int {{
     return mul3(14)
 }}
