@@ -49,7 +49,7 @@ jobs:
         run: uv build
 
       - name: Verify CLI entrypoint
-        run: uv run suma
+        run: uv run suma --help
 
       - name: Security audit
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
