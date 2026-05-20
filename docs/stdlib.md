@@ -144,7 +144,7 @@ pub main(): Int {
     
     print("Sum: " + to_str(list_sum(numbers)))
     print("Max: " + to_str(list_max(numbers)))
-    print("GCD: " to_str(gcd_int(12, 8)))
+    print("GCD: " + to_str(gcd_int(12, 8)))
     print("5! = " + to_str(factorial_int(5)))
     print("Fib(10) = " + to_str(fib_int(10)))
     

@@ -2,7 +2,7 @@
 
 ## Getting Started
 
-Suma-lang is a statically-typed language with explicit error handling via Result types. No exceptions — you handle errors as values.
+Suma-lang is a statically-typed language with explicit error handling via Result types. Recoverable errors are handled as values, while `throw` / `try` / `catch` exist for exceptional control flow.
 
 ```suma
 pub main(): Int {
@@ -15,9 +15,9 @@ That's your entry point. The function must return an `Int`, and `0` means succes
 
 ## Lexical Stuff
 
-Identifiers start with a letter or underscore, then can use letters, numbers, and underscores. Case matters.
+Identifiers can start with a letter, underscore, or digit, then can use letters, numbers, and underscores. Case matters. A digit-only word is still a number, while a mixed word like `123abc` is an identifier.
 
-Keywords you can't use as names: `pub`, `pri`, `const`, `init`, `this`, `it`, `if`, `elif`, `else`, `loop`, `break`, `continue`, `return`, `import`, `getter`, `setter`, `static`, `is`, `fn`, `class`, `throw`, `try`, `catch`, `finally`.
+Keywords you can't use as names: `pub`, `pri`, `const`, `init`, `this`, `it`, `if`, `elif`, `else`, `while`, `for`, `in`, `loop`, `break`, `continue`, `return`, `import`, `static`, `is`, `class`, `throw`, `try`, `catch`, `finally`, `true`, `false`, `null`.
 
 Comments work like this:
 
@@ -40,19 +40,20 @@ Strings use double or single quotes, support escapes: `\n`, `\t`, `\\`, `\"`, `\
 - `Str` — strings
 - `Bool` — `true` or `false`
 - `Null` — the nothing value
-- `Any` — dynamic type when you need it
+- `Any` — accepts any value at API boundaries, then narrows when a concrete value is assigned
 
 **Special types:**
 - `List` — growable list: `List(1, 2, 3)`
 - `R<T, E>` — Result type, generic: `R<Int, Str>`
-- `Function` — function values
+- `Function` — function values; `Function<Int, Str>` means one `Int` parameter returning `Str`
 
-Type annotations go after the name:
+Type annotations go after the name. Generic types use angle brackets and are invariant:
 
 ```suma
 age: Int = 25
 name: Str = "Alice"
-items: List = List(1, 2, 3)
+items: List<Int> = List(1, 2, 3)
+result: R<Int, Str> = Ok(42)
 ```
 
 ## Variables
@@ -65,6 +66,13 @@ pri temp: Int = 0
 ```
 
 `pub` at the top level makes it visible everywhere. `pri` keeps it in the current scope.
+
+Inside functions, assigning to a missing name creates a local and infers its type:
+
+```suma
+count = 1        // inferred as Int
+name = "Suma"    // inferred as Str
+```
 
 ## Operators
 
@@ -81,16 +89,18 @@ Pretty much what you'd expect:
 **Assignment:** `=`, `+=`, `-=`, `*=`, `/=`, `%=`
 
 **Special stuff:**
-- `->` — pattern match on Result
+- `->` — lambda body marker and pattern match on Result
 - `?.` — safe call (returns null if error)
-- `?=` — Elvis operator (use default if error)
+- `?:` — Result Elvis operator (unwrap `Ok`, use default for `Err`)
+- `??` — null coalescing operator
+- `?` — Result propagation operator
 - `[]` — index access
 - `.` — member access
 - `is` — type check
 
 Operator precedence, lowest to highest:
 ```
-=  →  ?=  →  ||  →  &&  →  |  →  ^  →  &  →  == !=  →  < > <= >= is  →  << >>  →  + -  →  * / %  →  ! - ~  →  postfix (call, member, index)
+=  →  .. ..=  →  ?: ??  →  ||  →  &&  →  |  →  ^  →  &  →  == !=  →  < > <= >= is  →  << >>  →  + -  →  * / %  →  ! - ~  →  postfix (call, member, index, `?`, `?.`, `->`)
 ```
 
 ## Control Flow
@@ -154,21 +164,92 @@ pub factorial(n: Int): Int {
 Functions are first-class values:
 
 ```suma
-double: Function = fn(x: Int): Int {
+double: Function = (x: Int): Int -> {
     return x * 2
 }
 
+plus_one: Function = (x: Int) -> x + 1
 result: Int = double(21)  // 42
+```
+
+You can leave a callback as plain `Function` for dynamic call checking, or use
+`Function<Arg1, Arg2, Return>` to let the analyzer check calls statically:
+
+```suma
+inc: Function<Int, Int> = (x: Int): Int -> x + 1
+answer: Int = inc(41)
 ```
 
 You can pass them around:
 
 ```suma
-pub apply(n: Int, fn: Function): Int {
-    return fn(n)
+pub apply(n: Int, callback: Function): Int {
+    return callback(n)
 }
 
-result: Int = apply(5, fn(x: Int): Int { return x * x })
+result: Int = apply(5, (x: Int): Int -> { return x * x })
+```
+
+You can write generic functions. Suma infers type parameters from the call site and erases them at runtime:
+
+```suma
+pub id<T>(value: T): T {
+    return value
+}
+
+answer: Int = id(42)
+word: Str = id("suma")
+```
+
+Function overloads are selected by parameter types, similar to Java overload resolution. Overload sets cannot use default/optional parameters, and overloads with the same erased generic signature are rejected:
+
+```suma
+pub size(value: Int): Int {
+    return value
+}
+
+pub size(value: Str): Int {
+    return value.size
+}
+```
+
+### Decorators
+
+Decorators are Suma or Python callables that receive a function-like value and return a replacement. They can decorate top-level functions, classes, and class methods:
+
+```suma
+pub plus_ten(func: Function): Function {
+    return () -> {
+        return func() + 10
+    }
+}
+
+@plus_ten
+pub answer(): Int {
+    return 32
+}
+
+pub wrap_box(ctor: Function): Function {
+    return (value: Int) -> {
+        box: Box = ctor(value)
+        box.value += 1
+        return box
+    }
+}
+
+@wrap_box
+Box {
+    value: Int
+
+    init(value: Int) {
+        this.value = value
+    }
+
+    @plus_ten
+    pub get(): Int {
+        return this.value
+    }
+}
 ```
 
 ## Classes
@@ -193,26 +274,54 @@ pub Person {
 
 `pub` fields are accessible outside, `pri` are private. The `init` method is your constructor, called with `ClassName(args)`.
 
+Classes can be generic and methods can be overloaded by parameter type:
+
+```suma
+Box<T> {
+    pub value: T
+
+    init(value: T) {
+        this.value = value
+    }
+
+    pub get(): T {
+        return this.value
+    }
+}
+
+Scorer {
+    pub score(value: Int): Int { return value + 1 }
+    pub score(value: Str): Int { return value.size }
+}
+```
+
+Operator overloading is implemented through special instance methods on the left operand. For example, `a + b` calls `a.op_add(b)` when that method exists. Supported names are `op_add`, `op_sub`, `op_mul`, `op_div`, `op_mod`, `op_eq`, `op_ne`, `op_gt`, `op_lt`, `op_ge`, `op_le`, `op_bit_and`, `op_bit_or`, `op_bit_xor`, `op_shl`, `op_shr`, `op_neg`, `op_not`, and `op_bit_not`.
+
 ### Getters and Setters
 
 ```suma
 pub Rectangle {
-    pri width: Int
+    pri _width: Int
     pri height: Int
 
-    pub area: Int
-        .getter {
-            return this.width * this.height
-        }
+    pub get area(): Int {
+        return this._width * this.height
+    }
 
-    pub width: Int
-        .setter (value: Int) {
-            if (value >= 0) {
-                this.width = value
-            }
+    pub get width(): Int {
+        return this._width
+    }
+
+    pub set width(value: Int) {
+        if (value >= 0) {
+            this._width = value
         }
+    }
 }
 ```
+
+`get` and `set` are contextual in class bodies, so ordinary methods like `pub get(): Int` remain valid.
+Use a separate backing field such as `_width`; assigning to `this.width` calls the setter.
 
 ## Pattern Matching
 
@@ -250,7 +359,7 @@ nested -> {
 
 ## Error Handling
 
-No exceptions. You return `Ok(value)` for success and `Err(error)` for failure:
+Prefer Results for recoverable errors. Return `Ok(value)` for success and `Err(error)` for failure:
 
 ```suma
 pub parse_number(s: Str): R<Int, Str> {
@@ -267,7 +376,17 @@ Helper functions:
 - `unwrap(result)` — gets the value, panics if Err
 - `unwrap_or(result, default)` — gets value or returns default
 
-`throw` is available for exceptional situations that you can't recover from.
+Use `?` to propagate an `Err` from a function returning `R<T, E>`:
+
+```suma
+pub add(a: Str, b: Str): R<Int, Str> {
+    left: Int = parse_int(a)?
+    right: Int = parse_int(b)?
+    return Ok(left + right)
+}
+```
+
+`throw` / `try` / `catch` / `finally` are available for exceptional control flow that does not fit Result-based recovery.
 
 ## Imports
 
@@ -292,17 +411,25 @@ The compiler catches circular imports and reports them.
 
 ## Special Syntax
 
-### Elvis Operator (?=)
+### Result Elvis Operator (?:)
 
 ```suma
-result: R = left ?= right
+result = left ?: right
 // equivalent to:
-if (is_err(left)) {
-    result = right
+if (is_ok(left)) {
+    result = left.value
 } else {
-    result = left
+    result = right
 }
 ```
+
+### Null Coalescing (??)
+
+```suma
+result = nullable ?? fallback
+```
+
+The right side is evaluated only when the left side is `null`.
 
 ### Safe Call (?.)
 

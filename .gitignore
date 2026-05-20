@@ -35,6 +35,11 @@ Thumbs.db
 # Logs
 *.log
 
+# Local workspace / agent state
+.tmp/
+.claude/
+AGENTS.md
+
 # Ruff
 .ruff_cache/
 
