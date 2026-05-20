@@ -2,18 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main, py-main]
+    branches: [py-main]
   pull_request:
-    branches: [main, py-main]
+    branches: [py-main]
 
 jobs:
   checks:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout
@@ -31,20 +32,24 @@ jobs:
         run: uv sync --extra lint --dev
 
       - name: Check formatting
-        if: matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv run ruff format --check .
 
       - name: Lint
-        if: matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv run ruff check .
 
       - name: Type check
-        if: matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv run pyright
 
       - name: Test
         run: uv run pytest -q
 
       - name: Build package
-        if: matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv build
+
+      - name: Security audit
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: uv run pip-audit --desc
