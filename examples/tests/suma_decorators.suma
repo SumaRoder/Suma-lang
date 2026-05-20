@@ -1,0 +1,14 @@
+pub plus_ten(func: Function): Function {
+    return () -> {
+        return func() + 10
+    }
+}
+
+@plus_ten
+pub answer(): Int {
+    return 32
+}
+
+pub main(): Int {
+    return answer()
+}

@@ -20,6 +20,10 @@ class CharStream:
     def peek(self) -> str:
         return self._src[self._idx] if self.has_next() else "\0"
 
+    def peek_at(self, offset: int) -> str:
+        idx = self._idx + offset
+        return self._src[idx] if idx < self._len else "\0"
+
     def next(self) -> str:
         if not self.has_next():
             return "\0"

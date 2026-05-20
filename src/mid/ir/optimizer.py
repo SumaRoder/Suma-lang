@@ -13,6 +13,70 @@ from typing import Optional
 
 from . import *
 
+_BINARY_INSTRS = (
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+)
+
+_UNARY_INSTRS = (Neg, Not, BitNot)
+_SRC_INSTRS = (StoreVar, SetIt, Pop, Print, Neg, Not, BitNot)
+_DEST_INSTRS = (
+    LoadConst,
+    LoadVar,
+    LoadGlobal,
+    LoadThis,
+    LoadIt,
+    Call,
+    CallGlobal,
+    MakeList,
+    MakeRange,
+    MakeOk,
+    MakeErr,
+    MakeLambda,
+    MakeObject,
+    LoadMember,
+    LoadIndex,
+    LoadSlice,
+    IsOk,
+    IsErr,
+    UnwrapOk,
+    *_BINARY_INSTRS,
+    *_UNARY_INSTRS,
+)
+_PURE_DEST_INSTRS = (
+    LoadConst,
+    LoadVar,
+    LoadGlobal,
+    LoadThis,
+    LoadIt,
+    MakeLambda,
+    MakeRange,
+    LoadMember,
+    LoadIndex,
+    LoadSlice,
+    IsOk,
+    IsErr,
+    UnwrapOk,
+    *_BINARY_INSTRS,
+    *_UNARY_INSTRS,
+)
+
 
 def _is_constant(op: Operand) -> bool:
     """Check if an operand is an immediate constant."""
@@ -32,7 +96,8 @@ def _try_fold_binary(op: str, left: object, right: object) -> Optional[object]:
         if op == "add":
             if isinstance(left, str) or isinstance(right, str):
                 return str(left) + str(right)
-            return left + right
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left + right
         elif op == "sub":
             if isinstance(left, (int, float)) and isinstance(right, (int, float)):
                 return left - right
@@ -58,13 +123,25 @@ def _try_fold_binary(op: str, left: object, right: object) -> Optional[object]:
         elif op == "ne":
             return left != right
         elif op == "gt":
-            return left > right
+            if isinstance(left, str) and isinstance(right, str):
+                return left > right
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left > right
         elif op == "lt":
-            return left < right
+            if isinstance(left, str) and isinstance(right, str):
+                return left < right
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left < right
         elif op == "ge":
-            return left >= right
+            if isinstance(left, str) and isinstance(right, str):
+                return left >= right
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left >= right
         elif op == "le":
-            return left <= right
+            if isinstance(left, str) and isinstance(right, str):
+                return left <= right
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left <= right
         elif op == "and":
             return left and right
         elif op == "or":
@@ -142,7 +219,7 @@ def _constant_fold(block: BasicBlock) -> bool:
 
     for instr in block.instrs:
         # Binary constant folding
-        if type(instr) in _BINOP_MAP:
+        if isinstance(instr, _BINARY_INSTRS):
             left_val = _get_constant(instr.left)
             right_val = _get_constant(instr.right)
             if left_val is not None and right_val is not None:
@@ -153,7 +230,7 @@ def _constant_fold(block: BasicBlock) -> bool:
                     continue
 
         # Unary constant folding
-        if type(instr) in _UNOP_MAP:
+        if isinstance(instr, _UNARY_INSTRS):
             val = _get_constant(instr.src)
             if val is not None:
                 result = _try_fold_unary(_UNOP_MAP[type(instr)], val)
@@ -185,32 +262,20 @@ def _constant_propagation(block: BasicBlock) -> bool:
 
         # Try to replace operands with constants
         modified = False
-        if (
-            hasattr(instr, "left")
-            and isinstance(instr.left, VirtualReg)
-            and instr.left in reg_constants
-        ):
+        if isinstance(instr, _BINARY_INSTRS) and instr.left in reg_constants:
             instr = _replace_operand(instr, "left", Immediate(reg_constants[instr.left]))
             modified = True
-        if (
-            hasattr(instr, "right")
-            and isinstance(instr.right, VirtualReg)
-            and instr.right in reg_constants
-        ):
+        if isinstance(instr, _BINARY_INSTRS) and instr.right in reg_constants:
             instr = _replace_operand(instr, "right", Immediate(reg_constants[instr.right]))
             modified = True
         if (
-            hasattr(instr, "src")
+            isinstance(instr, _SRC_INSTRS)
             and isinstance(instr.src, VirtualReg)
             and instr.src in reg_constants
         ):
             instr = _replace_operand(instr, "src", Immediate(reg_constants[instr.src]))
             modified = True
-        if (
-            hasattr(instr, "cond")
-            and isinstance(instr.cond, VirtualReg)
-            and instr.cond in reg_constants
-        ):
+        if isinstance(instr, (Branch, BranchFalse)) and instr.cond in reg_constants:
             instr = _replace_operand(instr, "cond", Immediate(reg_constants[instr.cond]))
             modified = True
 
@@ -218,7 +283,7 @@ def _constant_propagation(block: BasicBlock) -> bool:
             changed = True
 
         # If this instruction writes to a register, invalidate it
-        if hasattr(instr, "dest"):
+        if isinstance(instr, _DEST_INSTRS):
             reg_constants.pop(instr.dest, None)
 
         new_instrs.append(instr)
@@ -247,7 +312,7 @@ def _collect_used_regs(func: IRFunction) -> set[VirtualReg]:
 
 
 def _add_used_regs(instr: IRInstr, used_regs: set[VirtualReg]) -> None:
-    for attr in ("left", "right", "src", "cond", "obj", "index", "value", "callee"):
+    for attr in ("left", "right", "src", "cond", "obj", "index", "value", "callee", "start", "end"):
         operand = getattr(instr, attr, None)
         if isinstance(operand, VirtualReg):
             used_regs.add(operand)
@@ -275,6 +340,7 @@ def _dead_code_elimination(block: BasicBlock, used_regs: set[VirtualReg]) -> boo
         CallGlobal,
         MakeObject,
         MakeList,
+        MakeRange,
         MakeOk,
         MakeErr,
     )
@@ -284,7 +350,7 @@ def _dead_code_elimination(block: BasicBlock, used_regs: set[VirtualReg]) -> boo
     for instr in block.instrs:
         if isinstance(instr, side_effect_ops):
             new_instrs.append(instr)
-        elif hasattr(instr, "dest") and instr.dest not in used_regs:
+        elif isinstance(instr, _PURE_DEST_INSTRS) and instr.dest not in used_regs:
             removed = True
         else:
             new_instrs.append(instr)

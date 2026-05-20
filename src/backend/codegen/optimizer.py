@@ -23,6 +23,7 @@ _ARG_OPS = frozenset(
         Op.LOAD_VAR,
         Op.STORE_VAR,
         Op.LOAD_GLOBAL,
+        Op.STORE_GLOBAL,
         Op.CALL_GLOBAL,
         Op.LOAD_FUNC,
         Op.JUMP,
@@ -32,6 +33,7 @@ _ARG_OPS = frozenset(
         Op.MAKE_LIST,
         Op.MAKE_OBJECT,
         Op.MAKE_LAMBDA,
+        Op.MAKE_RANGE,
         Op.MEMBER,
         Op.SET_MEMBER,
         Op.SLICE,
@@ -40,6 +42,7 @@ _ARG_OPS = frozenset(
 )
 
 _ARG_COUNTS = {op: 1 for op in _ARG_OPS}
+_ARG_COUNTS[Op.MAKE_OBJECT] = 2
 _ARG_COUNTS.update(
     {
         Op.JUMP_IF_VAR_CMP: 4,
@@ -105,6 +108,16 @@ def _instr_len(instr: Instr) -> int:
     if instr.arg is not None:
         return 2
     return 1
+
+
+def _arg(instr: Instr) -> int:
+    if instr.arg is None:
+        raise ValueError(f"Instruction {instr.op.name} has no argument")
+    return instr.arg
+
+
+def _const_at(constants: list[object], instr: Instr) -> object:
+    return constants[_arg(instr)]
 
 
 def decode(code: list[int]) -> list[Instr]:
@@ -276,7 +289,7 @@ def _constant_fold(instrs: list[Instr], constants: list[object]) -> list[Instr]:
             and instrs[i + 1].op in (Op.NEG, Op.NOT, Op.BIT_NOT)
             and not _has_jump_target(instrs, _find_jump_targets(instrs), i + 1, 1)
         ):
-            val = constants[instrs[i].arg]
+            val = _const_at(constants, instrs[i])
             unop = instrs[i + 1].op
             folded = _try_fold_unary(val, unop)
             if folded is not _SENTINEL:
@@ -294,8 +307,8 @@ def _constant_fold(instrs: list[Instr], constants: list[object]) -> list[Instr]:
             and instrs[i + 2].op in _BINOP_SET
             and not _has_jump_target(instrs, _find_jump_targets(instrs), i + 1, 2)
         ):
-            a = constants[instrs[i].arg]
-            b = constants[instrs[i + 1].arg]
+            a = _const_at(constants, instrs[i])
+            b = _const_at(constants, instrs[i + 1])
             binop = instrs[i + 2].op
             folded = _try_fold_binary(a, b, binop)
             if folded is not _SENTINEL:
@@ -418,7 +431,8 @@ def _try_fold_binary(a: object, b: object, op: Op) -> object:
         if op == Op.ADD:
             if isinstance(a, str) or isinstance(b, str):
                 return _to_str(a) + _to_str(b)
-            return a + b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                return a + b
         elif op == Op.SUB:
             if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                 return a - b
@@ -455,16 +469,24 @@ def _try_fold_binary(a: object, b: object, op: Op) -> object:
         elif op == Op.NE:
             return a != b
         elif op == Op.GT:
-            if isinstance(a, (int, float, str)) and isinstance(b, (int, float, str)):
+            if isinstance(a, str) and isinstance(b, str):
+                return a > b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                 return a > b
         elif op == Op.LT:
-            if isinstance(a, (int, float, str)) and isinstance(b, (int, float, str)):
+            if isinstance(a, str) and isinstance(b, str):
+                return a < b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                 return a < b
         elif op == Op.GE:
-            if isinstance(a, (int, float, str)) and isinstance(b, (int, float, str)):
+            if isinstance(a, str) and isinstance(b, str):
+                return a >= b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                 return a >= b
         elif op == Op.LE:
-            if isinstance(a, (int, float, str)) and isinstance(b, (int, float, str)):
+            if isinstance(a, str) and isinstance(b, str):
+                return a <= b
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
                 return a <= b
         elif op == Op.AND:
             return a and b
@@ -598,7 +620,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and instr.op == Op.LOAD_CONST
                 and result[i + 1].op == Op.JUMP_IF_FALSE
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val is True:
                     # Always true → skip the jump, just pop the value
                     new_result.append(Instr(op=Op.POP, orig_idx=instr.orig_idx))
@@ -620,7 +642,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and instr.op == Op.LOAD_CONST
                 and result[i + 1].op == Op.JUMP_IF_TRUE
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val is True:
                     new_result.append(
                         Instr(op=Op.JUMP, arg=result[i + 1].arg, orig_idx=instr.orig_idx)
@@ -697,7 +719,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and result[i + 1].op == Op.ADD
                 and not has_jump_target(i, 2)
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val == 0 and isinstance(val, (int, float)):
                     i += 2
                     changed = True
@@ -711,7 +733,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and result[i + 1].op == Op.SUB
                 and not has_jump_target(i, 2)
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val == 0 and isinstance(val, (int, float)):
                     i += 2
                     changed = True
@@ -724,7 +746,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and result[i + 1].op == Op.MUL
                 and not has_jump_target(i, 2)
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val == 1 and isinstance(val, (int, float)):
                     i += 2
                     changed = True
@@ -737,7 +759,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 and result[i + 1].op == Op.DIV
                 and not has_jump_target(i, 2)
             ):
-                val = constants[instr.arg]
+                val = _const_at(constants, instr)
                 if val == 1 and isinstance(val, (int, float)):
                     i += 2
                     changed = True
@@ -814,9 +836,9 @@ def _constant_propagation(instrs: list[Instr], constants: list[object]) -> list[
         if instr.op == Op.STORE_VAR and instr.arg is not None:
             # Check if the previous instruction loaded a constant
             if result and result[-1].op == Op.LOAD_CONST:
-                slot_const[instr.arg] = result[-1].arg
+                slot_const[_arg(instr)] = result[-1].arg
             else:
-                slot_const[instr.arg] = None  # unknown
+                slot_const[_arg(instr)] = None  # unknown
 
         elif instr.op in (Op.INPLACE_VAR_VAR, Op.INPLACE_VAR_CONST) and instr.args:
             slot_const[instr.args[0]] = None
@@ -832,7 +854,7 @@ def _constant_propagation(instrs: list[Instr], constants: list[object]) -> list[
             if instr.arg in slot_const and slot_const[instr.arg] is not None:
                 # Replace with LOAD_CONST
                 result.append(
-                    Instr(op=Op.LOAD_CONST, arg=slot_const[instr.arg], orig_idx=instr.orig_idx)
+                    Instr(op=Op.LOAD_CONST, arg=slot_const[_arg(instr)], orig_idx=instr.orig_idx)
                 )
                 changed = True
                 continue
@@ -921,11 +943,13 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
             and instrs[i + 3].orig_idx not in jump_targets
         ):
             cmp_code = _CMP_TO_CODE[instrs[i + 2].op]
+            rhs_slot = _arg(instrs[i + 1])
+            target = _arg(instrs[i + 3])
             result.append(
                 Instr(
                     op=Op.JUMP_IF_VAR_CMP,
-                    arg=instr.arg,
-                    args=(instr.arg, instrs[i + 1].arg, cmp_code, instrs[i + 3].arg),
+                    arg=_arg(instr),
+                    args=(_arg(instr), rhs_slot, cmp_code, target),
                     orig_idx=instr.orig_idx,
                 )
             )
@@ -948,11 +972,13 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
             and instrs[i + 3].orig_idx not in jump_targets
         ):
             cmp_code = _CMP_TO_CODE[instrs[i + 2].op]
+            const_idx = _arg(instrs[i + 1])
+            target = _arg(instrs[i + 3])
             result.append(
                 Instr(
                     op=Op.JUMP_IF_VAR_CONST_CMP,
-                    arg=instr.arg,
-                    args=(instr.arg, instrs[i + 1].arg, cmp_code, instrs[i + 3].arg),
+                    arg=_arg(instr),
+                    args=(_arg(instr), const_idx, cmp_code, target),
                     orig_idx=instr.orig_idx,
                 )
             )
@@ -979,8 +1005,8 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
             result.append(
                 Instr(
                     op=Op.INPLACE_VAR_VAR,
-                    arg=instr.arg,
-                    args=(instr.arg, instrs[i + 1].arg, int(instrs[i + 2].op)),
+                    arg=_arg(instr),
+                    args=(_arg(instr), _arg(instrs[i + 1]), int(instrs[i + 2].op)),
                     orig_idx=instr.orig_idx,
                 )
             )
@@ -1007,8 +1033,8 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
             result.append(
                 Instr(
                     op=Op.INPLACE_VAR_CONST,
-                    arg=instr.arg,
-                    args=(instr.arg, instrs[i + 1].arg, int(instrs[i + 2].op)),
+                    arg=_arg(instr),
+                    args=(_arg(instr), _arg(instrs[i + 1]), int(instrs[i + 2].op)),
                     orig_idx=instr.orig_idx,
                 )
             )

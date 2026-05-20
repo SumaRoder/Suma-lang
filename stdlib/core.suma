@@ -31,8 +31,8 @@ pub min_int(a: Int, b: Int): Int {
 }
 
 pub repeat_str(s: Str, count: Int): Str {
-    result: Str = ""
-    i: Int = 0
+    result = ""
+    i = 0
     loop {
         if (i >= count) {
             break

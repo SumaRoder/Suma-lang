@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from main import compile_source
+from main import CompileSourceError, compile_source
 from src.runtime.vm.vm import VM
 
 
@@ -94,8 +94,45 @@ import "./lib/calc.suma"
 pub main(): Int {
     return answer()
 }
-"""
+        """
         assert _run(source, str(root / "main.suma")) == 42
+
+
+def test_missing_import_reports_candidates():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        source = """
+import "missing_mod"
+
+pub main(): Int {
+    return 42
+}
+"""
+        try:
+            _run(source, str(root / "main.suma"))
+            assert False, "expected import failure"
+        except CompileSourceError as exc:
+            assert "Cannot resolve import 'missing_mod'" in str(exc)
+
+
+def test_circular_import_is_rejected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "a.suma").write_text("""
+import "./b.suma"
+
+pub main(): Int {
+    return 42
+}
+""")
+        (root / "b.suma").write_text("""
+import "./a.suma"
+""")
+        try:
+            _run((root / "a.suma").read_text(), str(root / "a.suma"))
+            assert False, "expected circular import failure"
+        except CompileSourceError as exc:
+            assert "Circular import detected" in str(exc)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,59 @@
+pub plus_ten(func: Function): Function {
+    return () -> {
+        return func() + 10
+    }
+}
+
+pub wrap_ctor(ctor: Function): Function {
+    return (value: Int) -> {
+        box: Box = ctor(value)
+        box.value += 1
+        return box
+    }
+}
+
+@plus_ten
+pub decorated_answer(): Int {
+    return 32
+}
+
+pub score(value: Int): Int {
+    return value + 1
+}
+
+pub score(value: Str): Int {
+    return value.size
+}
+
+@wrap_ctor
+Box {
+    pub value: Int
+
+    pub init(value: Int) {
+        this.value = value
+    }
+
+    @plus_ten
+    pub value_plus_ten(): Int {
+        return this.value
+    }
+}
+
+Counter {
+    pub score(value: Int): Int {
+        return value + 2
+    }
+
+    pub score(value: Str): Int {
+        return value.size
+    }
+}
+
+pub main(): Int {
+    box: Box = Box(10)
+    counter: Counter = Counter()
+    if (score(38) + score("abc") + counter.score(37) + box.value_plus_ten() == 102) {
+        return decorated_answer()
+    }
+    return 0
+}

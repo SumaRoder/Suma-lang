@@ -1,5 +1,5 @@
 import "core"
-import "/root/Suma-lang/examples/lib/local_stats.suma"
+import "/data/data/com.termux/files/home/Suma-lang/examples/lib/local_stats.suma"
 
 pub main(): Int {
     score: Int = weighted_score(10, 20, 30)

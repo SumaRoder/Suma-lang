@@ -1,5 +1,27 @@
 pub json_escape(s: Str): Str {
-    return s
+    result = ""
+    i = 0
+    loop {
+        if (i >= s.size) {
+            break
+        }
+        ch: Str = s[i]
+        if (ch == "\\") {
+            result = result + "\\\\"
+        } elif (ch == "\"") {
+            result = result + "\\\""
+        } elif (ch == "\n") {
+            result = result + "\\n"
+        } elif (ch == "\t") {
+            result = result + "\\t"
+        } elif (ch == "\r") {
+            result = result + "\\r"
+        } else {
+            result = result + ch
+        }
+        i += 1
+    }
+    return result
 }
 
 pub to_json(value: Any): R {
@@ -49,12 +71,12 @@ pub JsonObject {
     }
 
     pub get(key: Str): Str {
-        i: Int = 0
+        i = 0
         loop {
             if (i >= this.pairs.size) {
                 return ""
             }
-            pair: List = this.pairs[i]
+            pair = this.pairs[i]
             if (pair[0] == key) {
                 return pair[1]
             }
@@ -64,8 +86,8 @@ pub JsonObject {
     }
 
     pub keys(): List {
-        result: List = List()
-        i: Int = 0
+        result = List()
+        i = 0
         loop {
             if (i >= this.pairs.size) {
                 break
@@ -77,7 +99,7 @@ pub JsonObject {
     }
 
     pub has(key: Str): Bool {
-        i: Int = 0
+        i = 0
         loop {
             if (i >= this.pairs.size) {
                 return false

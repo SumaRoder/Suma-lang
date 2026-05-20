@@ -1,6 +1,6 @@
 pub list_sum(items: List): Int {
-    total: Int = 0
-    i: Int = 0
+    total = 0
+    i = 0
     loop {
         if (i >= items.size) {
             break
@@ -12,8 +12,8 @@ pub list_sum(items: List): Int {
 }
 
 pub list_product(items: List): Int {
-    result: Int = 1
-    i: Int = 0
+    result = 1
+    i = 0
     loop {
         if (i >= items.size) {
             break
@@ -28,8 +28,8 @@ pub list_max(items: List): Int {
     if (items.size == 0) {
         return 0
     }
-    best: Int = items[0]
-    i: Int = 1
+    best = items[0]
+    i = 1
     loop {
         if (i >= items.size) {
             break
@@ -46,8 +46,8 @@ pub list_min(items: List): Int {
     if (items.size == 0) {
         return 0
     }
-    best: Int = items[0]
-    i: Int = 1
+    best = items[0]
+    i = 1
     loop {
         if (i >= items.size) {
             break
@@ -61,7 +61,7 @@ pub list_min(items: List): Int {
 }
 
 pub list_push_range(items: List, start: Int, end: Int): Int {
-    i: Int = start
+    i = start
     loop {
         if (i > end) {
             break

@@ -1,7 +1,7 @@
 Box {
     value: Int
     init(value: Int = 42) { this.value = value }
-    get(): Int { return this.value }
+    pub get(): Int { return this.value }
 }
 
 pub main(): Int {

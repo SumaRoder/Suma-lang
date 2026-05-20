@@ -86,6 +86,69 @@ pub main(): Int {
     assert VM(loaded).run() == 42
 
 
+def test_suma_decorator_replaces_function_direct_and_ir():
+    source = """
+pub plus_ten(func: Function): Function {
+    return () -> {
+        return func() + 10
+    }
+}
+
+@plus_ten
+pub answer(): Int {
+    return 32
+}
+
+pub main(): Int {
+    return answer()
+}
+"""
+    assert _run(source) == 42
+    assert _run(source, use_ir=True) == 42
+
+
+def test_suma_decorator_on_class_and_method():
+    source = """
+pub wrap_ctor(ctor: Function): Function {
+    return (value: Int) -> {
+        box: Box = ctor(value)
+        box.value += 1
+        return box
+    }
+}
+
+pub add_five(func: Function): Function {
+    return () -> {
+        return func() + 5
+    }
+}
+
+@wrap_ctor
+Box {
+    pub value: Int
+    init(value: Int) {
+        this.value = value
+    }
+
+    @add_five
+    pub value_plus_five(): Int {
+        return this.value
+    }
+}
+
+pub main(): Int {
+    box: Box = Box(36)
+    return box.value_plus_five()
+}
+"""
+    assert _run(source) == 42
+    assert _run(source, use_ir=True) == 42
+    loaded = deserialize(serialize(_compile(source)))
+    assert loaded.decorators
+    assert loaded.method_decorators
+    assert VM(loaded).run() == 42
+
+
 if __name__ == "__main__":
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     passed = 0

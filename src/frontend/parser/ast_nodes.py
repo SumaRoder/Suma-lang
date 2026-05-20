@@ -84,6 +84,15 @@ class CompoundAssignExpr:
 
 
 @dataclass(frozen=True)
+class IncrementExpr:
+    """Increment/decrement operator: target++ / target-- / ++target / --target."""
+
+    target: Expr
+    delta: int
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class CallExpr:
     callee: Expr
     args: Sequence[Expr]
@@ -148,6 +157,23 @@ class ElvExpr:
 
 
 @dataclass(frozen=True)
+class NullCoalesceExpr:
+    """Null coalescing operator: left ?? right"""
+
+    left: Expr
+    right: Expr
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
+class PropagateExpr:
+    """Result propagation operator: expr?"""
+
+    value: Expr
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class SafeCallExpr:
     """Safe call: obj?.member()"""
 
@@ -158,11 +184,37 @@ class SafeCallExpr:
 
 
 @dataclass(frozen=True)
+class SafeMemberExpr:
+    """Safe member access: obj?.member"""
+
+    obj: Expr
+    member: str
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class PatternMatchExpr:
     """Arrow match: value -> { ... }"""
 
     scrutinee: Expr
     arms: Sequence[MatchArm]
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
+class IfExpr:
+    condition: Expr
+    then_branch: BlockStmt
+    elif_branches: Sequence[tuple[Expr, BlockStmt]]
+    else_branch: Optional[BlockStmt]
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
+class RangeExpr:
+    start: Expr
+    end: Expr
+    inclusive: bool
     info: TokenInfo
 
 
@@ -192,6 +244,7 @@ Expr = Union[
     BinaryExpr,
     AssignExpr,
     CompoundAssignExpr,
+    IncrementExpr,
     CallExpr,
     MemberExpr,
     IndexExpr,
@@ -201,8 +254,13 @@ Expr = Union[
     ErrExpr,
     LambdaExpr,
     ElvExpr,
+    NullCoalesceExpr,
+    PropagateExpr,
     SafeCallExpr,
+    SafeMemberExpr,
     PatternMatchExpr,
+    IfExpr,
+    RangeExpr,
 ]
 
 # Stmt
@@ -252,6 +310,21 @@ class LoopStmt:
 
 
 @dataclass(frozen=True)
+class WhileStmt:
+    condition: Expr
+    body: BlockStmt
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
+class ForInStmt:
+    var_name: str
+    iterable: Expr
+    body: BlockStmt
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class BreakStmt:
     info: TokenInfo
 
@@ -276,6 +349,13 @@ class TryCatchStmt:
     info: TokenInfo
 
 
+@dataclass(frozen=True)
+class DestructureAssignStmt:
+    targets: Sequence[str]
+    value: Expr
+    info: TokenInfo
+
+
 Stmt = Union[
     ExprStmt,
     VarDecl,
@@ -283,10 +363,13 @@ Stmt = Union[
     BlockStmt,
     IfStmt,
     LoopStmt,
+    WhileStmt,
+    ForInStmt,
     BreakStmt,
     ContinueStmt,
     ThrowStmt,
     TryCatchStmt,
+    DestructureAssignStmt,
 ]
 
 
@@ -314,6 +397,7 @@ class FunctionDecl:
     is_pub: bool
     is_static: bool
     info: TokenInfo
+    type_params: Sequence[str] = field(default_factory=tuple)
     decorators: Sequence[Decorator] = field(default_factory=tuple)
 
 
@@ -322,6 +406,7 @@ class GetterDecl:
     name: str
     return_type: Optional[str]
     body: BlockStmt
+    is_pub: bool
     info: TokenInfo
 
 
@@ -329,7 +414,9 @@ class GetterDecl:
 class SetterDecl:
     name: str
     param_name: str
+    param_type: Optional[str]
     body: BlockStmt
+    is_pub: bool
     info: TokenInfo
 
 
@@ -339,6 +426,9 @@ class ClassDecl:
     members: Sequence[Union[FunctionDecl, VarDecl, GetterDecl, SetterDecl]]
     is_pub: bool
     info: TokenInfo
+    type_params: Sequence[str] = field(default_factory=tuple)
+    base_type: Optional[str] = None
+    decorators: Sequence[Decorator] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

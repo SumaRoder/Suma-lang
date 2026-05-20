@@ -1,0 +1,31 @@
+Box<T> {
+    pub value: T
+
+    init(value: T) {
+        this.value = value
+    }
+
+    pub get(): T {
+        return this.value
+    }
+}
+
+Pair<A, B> {
+    pub left: A
+    pub right: B
+
+    init(left: A, right: B) {
+        this.left = left
+        this.right = right
+    }
+
+    pub score(): Int {
+        return to_str(this.left).size + this.right
+    }
+}
+
+pub main(): Int {
+    box: Box<Int> = Box(40)
+    pair: Pair<Str, Int> = Pair("ok", box.get())
+    return pair.score()
+}

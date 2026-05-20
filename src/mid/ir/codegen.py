@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from src.backend.codegen.compiler import Compiler
 from src.backend.codegen.opcodes import Function, Op, ProgramBytecode
+from src.frontend.parser.ast_nodes import FunctionDecl
 
 from . import *
 
@@ -20,6 +21,7 @@ class CodeGenerator:
 
     def __init__(self) -> None:
         self.program = ProgramBytecode()
+        self._const_pool: dict[tuple[type, object], int] = {}
         self._string_pool: dict[str, int] = {}
         self._spill_slots: dict[VirtualReg, int] = {}  # VirtualReg -> spill slot
         self._next_spill_slot: int = 0
@@ -37,33 +39,62 @@ class CodeGenerator:
         """Generate bytecode from an IR program."""
         self.program.classes = ir_program.classes
         self.program.py_imports = dict(ir_program.py_imports)
+        self.program.overloads = dict(ir_program.overloads)
 
         for ir_func in ir_program.functions:
             self._gen_function(ir_func)
 
-        if ir_program.decorated_functions:
+        if (
+            ir_program.decorated_functions
+            or ir_program.decorated_classes
+            or ir_program.decorated_methods
+        ):
             direct_compiler = Compiler()
             direct_compiler.program = self.program
             direct_compiler._class_info = self.program.classes
             direct_compiler._func_name_to_idx = {
                 fn.name: i for i, fn in enumerate(self.program.functions)
             }
+            for cls in ir_program.decorated_classes:
+                for member in cls.members:
+                    if isinstance(member, FunctionDecl) and member.name == "init":
+                        direct_compiler._class_init_decls[cls.name] = member
+
             for func in ir_program.decorated_functions:
                 func_idx = direct_compiler._func_name_to_idx.get(func.name)
                 if func_idx is not None:
-                    init_idx = direct_compiler._compile_decorator_init(func.name, func, func_idx)
+                    init_idx = direct_compiler._compile_decorator_init(
+                        func.name, func.decorators, func_idx
+                    )
                     self.program.decorators[func.name] = init_idx
+
+            for cls in ir_program.decorated_classes:
+                ctor_idx = direct_compiler._compile_class_constructor(cls)
+                init_idx = direct_compiler._compile_decorator_init(
+                    cls.name, cls.decorators, ctor_idx
+                )
+                self.program.decorators[cls.name] = init_idx
+
+            for key, method in ir_program.decorated_methods:
+                init_idx = direct_compiler._compile_decorator_init(key, method.decorators)
+                self.program.method_decorators[key] = init_idx
 
         self.program.entry = ir_program.entry
         return self.program
 
     def _const(self, value: object) -> int:
         """Add a constant and return its index."""
-        for i, c in enumerate(self.program.constants):
-            if type(c) is type(value) and c == value:
-                return i
+        if len(self._const_pool) < len(self.program.constants):
+            self._const_pool = {
+                (type(const), const): idx for idx, const in enumerate(self.program.constants)
+            }
+        key = (type(value), value)
+        existing = self._const_pool.get(key)
+        if existing is not None:
+            return existing
         idx = len(self.program.constants)
         self.program.constants.append(value)
+        self._const_pool[key] = idx
         return idx
 
     def _string_const(self, value: str) -> int:
@@ -109,6 +140,9 @@ class CodeGenerator:
             arity=ir_func.arity,
             is_method=ir_func.is_method,
             class_name=ir_func.class_name,
+            capture_count=ir_func.capture_count,
+            param_types=list(ir_func.param_types),
+            type_params=list(ir_func.type_params),
         )
         self.program.functions.append(fn)
 
@@ -144,7 +178,7 @@ class CodeGenerator:
         if isinstance(instr, StoreVar):
             return self._operand_size(instr.src) + 3
         if isinstance(instr, StoreGlobal):
-            return self._operand_size(instr.src) + 5
+            return self._operand_size(instr.src) + 3
         if isinstance(
             instr,
             (
@@ -191,15 +225,19 @@ class CodeGenerator:
             return sum(self._operand_size(a) for a in instr.args) + 2 + self._dest_spill_size()
         if isinstance(instr, MakeList):
             return sum(self._operand_size(e) for e in instr.elements) + 2 + self._dest_spill_size()
+        if isinstance(instr, MakeRange):
+            return (
+                self._operand_size(instr.start)
+                + self._operand_size(instr.end)
+                + 2
+                + self._dest_spill_size()
+            )
         if isinstance(instr, (MakeOk, MakeErr)):
             return self._operand_size(instr.value) + 1 + self._dest_spill_size()
         if isinstance(instr, MakeLambda):
             return 2 + self._dest_spill_size()
         if isinstance(instr, MakeObject):
-            size = sum(self._operand_size(a) for a in instr.args) + 2 + self._dest_spill_size()
-            if "init" in self.program.classes.get(instr.class_name, {}).get("methods", {}):
-                size += 1
-            return size
+            return sum(self._operand_size(a) for a in instr.args) + 3 + self._dest_spill_size()
         if isinstance(instr, LoadMember):
             return self._operand_size(instr.obj) + 2 + self._dest_spill_size()
         if isinstance(instr, StoreMember):
@@ -269,11 +307,9 @@ class CodeGenerator:
             fn.code.append(self._string_const(instr.name))
             self._spill_dest(instr.dest, fn)
         elif isinstance(instr, StoreGlobal):
-            fn.code.append(int(Op.LOAD_CONST))
-            fn.code.append(self._string_const(instr.name))
             self._load_operand(instr.src, fn)
-            fn.code.append(int(Op.STORE_VAR))
-            fn.code.append(-1)
+            fn.code.append(int(Op.STORE_GLOBAL))
+            fn.code.append(self._string_const(instr.name))
             fn.code.append(int(Op.POP))
         elif isinstance(
             instr,
@@ -369,6 +405,12 @@ class CodeGenerator:
             fn.code.append(int(Op.MAKE_LIST))
             fn.code.append(len(instr.elements))
             self._spill_dest(instr.dest, fn)
+        elif isinstance(instr, MakeRange):
+            self._load_operand(instr.start, fn)
+            self._load_operand(instr.end, fn)
+            fn.code.append(int(Op.MAKE_RANGE))
+            fn.code.append(1 if instr.inclusive else 0)
+            self._spill_dest(instr.dest, fn)
         elif isinstance(instr, MakeOk):
             self._load_operand(instr.value, fn)
             fn.code.append(int(Op.MAKE_OK))
@@ -386,9 +428,8 @@ class CodeGenerator:
                 self._load_operand(arg, fn)
             fn.code.append(int(Op.MAKE_OBJECT))
             fn.code.append(self._string_const(instr.class_name))
+            fn.code.append(len(instr.args))
             self._spill_dest(instr.dest, fn)
-            if "init" in self.program.classes.get(instr.class_name, {}).get("methods", {}):
-                fn.code.append(int(Op.POP))
         elif isinstance(instr, LoadMember):
             self._load_operand(instr.obj, fn)
             fn.code.append(int(Op.MEMBER))

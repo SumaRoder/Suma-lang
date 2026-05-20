@@ -1,0 +1,17 @@
+pub id<T>(value: T): T {
+    return value
+}
+
+pub keep_last<T>(first: T, second: T): T {
+    return second
+}
+
+pub join_score<T>(prefix: T, value: Int): Int {
+    return to_str(prefix).size + value
+}
+
+pub main(): Int {
+    answer = id(40)
+    bonus = keep_last(0, 0)
+    return join_score("ok", answer) + bonus
+}

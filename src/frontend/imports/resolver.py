@@ -16,6 +16,16 @@ class ImportResolveError(Exception):
     pass
 
 
+DEFAULT_PY_IMPORT_ALLOWLIST = frozenset(
+    {
+        "json",
+        "math",
+        "statistics",
+        "examples.decorator_helpers",
+    }
+)
+
+
 @dataclass
 class ImportResolver:
     """Expands ImportDecl nodes into declarations from imported source files."""
@@ -70,10 +80,15 @@ class ImportResolver:
         for decl in declarations:
             if isinstance(decl, ImportDecl):
                 if decl.path.startswith("py:"):
-                    module_name = decl.path[3:]
+                    module_name, alias = _parse_py_import(decl.path[3:])
                     if not module_name:
                         raise ImportResolveError("Python import path cannot be empty")
-                    py_imports[_py_alias(module_name)] = module_name
+                    if not is_python_import_allowed(module_name):
+                        raise ImportResolveError(
+                            f"Python import '{module_name}' is not allowed; "
+                            "set SUMA_PY_IMPORTS to allow trusted modules"
+                        )
+                    py_imports[alias] = module_name
                     continue
                 imported_path = self._resolve_import_path(decl.path, current_file)
                 imported = self.load_file(imported_path)
@@ -155,3 +170,27 @@ def _real(path: str | Path) -> str:
 
 def _py_alias(module_name: str) -> str:
     return module_name.rsplit(".", 1)[-1]
+
+
+def _parse_py_import(spec: str) -> tuple[str, str]:
+    module_name = spec.strip()
+    if " as " not in module_name:
+        return module_name, _py_alias(module_name)
+
+    module_name, alias = (part.strip() for part in module_name.rsplit(" as ", 1))
+    if not module_name or not alias:
+        raise ImportResolveError(f"Invalid Python import alias: py:{spec}")
+    return module_name, alias
+
+
+def is_python_import_allowed(module_name: str) -> bool:
+    """Return whether a host Python module may be imported by Suma code."""
+    allowed = set(DEFAULT_PY_IMPORT_ALLOWLIST)
+    env_allowlist = os.environ.get("SUMA_PY_IMPORTS", "")
+    allowed.update(item.strip() for item in env_allowlist.split(",") if item.strip())
+    for item in allowed:
+        if item.endswith(".*") and module_name.startswith(item[:-1]):
+            return True
+        if module_name == item:
+            return True
+    return False

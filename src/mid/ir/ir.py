@@ -13,7 +13,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from src.frontend.parser.ast_nodes import FunctionDecl
+    from src.frontend.parser.ast_nodes import ClassDecl, FunctionDecl
 
 
 class IRType(Enum):
@@ -341,6 +341,16 @@ class MakeList(IRInstr):
 
 
 @dataclass
+class MakeRange(IRInstr):
+    """Create a range from start/end bounds."""
+
+    dest: VirtualReg
+    start: Operand
+    end: Operand
+    inclusive: bool
+
+
+@dataclass
 class MakeOk(IRInstr):
     """Wrap a value in Ok."""
 
@@ -532,6 +542,9 @@ class IRFunction:
     blocks: list[BasicBlock] = field(default_factory=list)
     # Local variable slots (for codegen)
     locals_count: int = 0
+    capture_count: int = 0
+    param_types: list[str | None] = field(default_factory=list)
+    type_params: list[str] = field(default_factory=list)
 
 
 # ============================================================================
@@ -549,3 +562,6 @@ class IRProgram:
     constants: list[object] = field(default_factory=list)
     py_imports: dict[str, str] = field(default_factory=dict)
     decorated_functions: list[FunctionDecl] = field(default_factory=list)
+    decorated_classes: list[ClassDecl] = field(default_factory=list)
+    decorated_methods: list[tuple[str, FunctionDecl]] = field(default_factory=list)
+    overloads: dict[str, list[int]] = field(default_factory=dict)

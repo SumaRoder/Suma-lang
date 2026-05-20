@@ -95,6 +95,8 @@ class Op(IntEnum):
     TAIL_CALL_GLOBAL = auto()  # arg: (nargs << 16) | func_idx — tail-call frame reuse
     LOOP_GENERIC = auto()  # variable args: condition descriptor + generic in-place ops
     SET_INDEX = auto()
+    STORE_GLOBAL = auto()  # arg: const index (global name)
+    MAKE_RANGE = auto()  # arg: 1 if inclusive, else 0
 
 
 @dataclass
@@ -108,6 +110,9 @@ class Function:
     locals_count: int = 0
     is_method: bool = False
     class_name: str | None = None
+    capture_count: int = 0
+    param_types: list[str | None] = field(default_factory=list)
+    type_params: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -118,5 +123,7 @@ class ProgramBytecode:
     constants: list[Any] = field(default_factory=list)
     classes: dict[str, dict] = field(default_factory=dict)
     py_imports: dict[str, str] = field(default_factory=dict)  # alias -> Python module
-    decorators: dict[str, int] = field(default_factory=dict)  # function name -> init function index
+    decorators: dict[str, int] = field(default_factory=dict)  # global name -> init function index
+    method_decorators: dict[str, int] = field(default_factory=dict)  # Class.method -> init index
+    overloads: dict[str, list[int]] = field(default_factory=dict)  # global name -> function indices
     entry: int = 0  # index of main function

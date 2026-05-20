@@ -8,7 +8,45 @@ import struct
 from src.backend.codegen.opcodes import Function, ProgramBytecode
 
 MAGIC = b"SUMA"
-VERSION = 6
+VERSION = 8
+
+
+class _ByteReader:
+    def __init__(self, data: bytes, context: str = ".sumac file") -> None:
+        self.data = data
+        self.offset = 0
+        self.context = context
+
+    def read(self, n: int) -> bytes:
+        if n < 0:
+            raise ValueError(f"Invalid {self.context}: negative read length")
+        end = self.offset + n
+        if end > len(self.data):
+            raise ValueError(f"Invalid {self.context}: truncated data")
+        chunk = self.data[self.offset : end]
+        self.offset = end
+        return chunk
+
+    def read_u8(self) -> int:
+        return struct.unpack("<B", self.read(1))[0]
+
+    def read_u32(self) -> int:
+        return struct.unpack("<I", self.read(4))[0]
+
+    def read_i64(self) -> int:
+        return struct.unpack("<q", self.read(8))[0]
+
+    def read_f64(self) -> float:
+        return struct.unpack("<d", self.read(8))[0]
+
+    def remaining(self) -> bytes:
+        chunk = self.data[self.offset :]
+        self.offset = len(self.data)
+        return chunk
+
+    def ensure_finished(self) -> None:
+        if self.offset != len(self.data):
+            raise ValueError(f"Invalid {self.context}: trailing data")
 
 
 def serialize(prog: ProgramBytecode) -> bytes:
@@ -40,6 +78,16 @@ def serialize(prog: ProgramBytecode) -> bytes:
     parts.append(struct.pack("<I", len(decorator_json)))
     parts.append(decorator_json)
 
+    # Method decorator init functions info (JSON)
+    method_decorator_json = json.dumps(prog.method_decorators).encode("utf-8")
+    parts.append(struct.pack("<I", len(method_decorator_json)))
+    parts.append(method_decorator_json)
+
+    # Overload sets info (JSON)
+    overload_json = json.dumps(prog.overloads).encode("utf-8")
+    parts.append(struct.pack("<I", len(overload_json)))
+    parts.append(overload_json)
+
     # Functions
     parts.append(struct.pack("<I", len(prog.functions)))
     for fn in prog.functions:
@@ -52,54 +100,56 @@ def serialize(prog: ProgramBytecode) -> bytes:
 
 def deserialize(data: bytes) -> ProgramBytecode:
     """Deserialize bytes to a ProgramBytecode."""
-    offset = 0
+    reader = _ByteReader(data)
 
-    def read(n: int) -> bytes:
-        nonlocal offset
-        chunk = data[offset : offset + n]
-        offset += n
-        return chunk
-
-    def read_u32() -> int:
-        return struct.unpack("<I", read(4))[0]
-
-    magic = read(4)
+    magic = reader.read(4)
     if magic != MAGIC:
         raise ValueError("Invalid .sumac file: bad magic")
 
-    version = read_u32()
-    if version not in (1, 2, 3, 4, 5, VERSION):
+    version = reader.read_u32()
+    if version not in (1, 2, 3, 4, 5, 6, 7, VERSION):
         raise ValueError(f"Unsupported .sumac version: {version}")
 
-    entry = read_u32()
+    entry = reader.read_u32()
 
     # Global constants
-    const_len = read_u32()
-    constants = _decode_constants(read(const_len))
+    const_len = reader.read_u32()
+    constants = _decode_constants(reader.read(const_len))
 
     # Classes
-    class_len = read_u32()
-    classes = json.loads(read(class_len).decode("utf-8"))
+    class_len = reader.read_u32()
+    classes = json.loads(reader.read(class_len).decode("utf-8"))
 
     # Python imports
     py_imports = {}
     if version >= 2:
-        py_import_len = read_u32()
-        py_imports = json.loads(read(py_import_len).decode("utf-8"))
+        py_import_len = reader.read_u32()
+        py_imports = json.loads(reader.read(py_import_len).decode("utf-8"))
 
     # Decorator init functions
     decorators = {}
     if version >= 3:
-        decorator_len = read_u32()
-        decorators = json.loads(read(decorator_len).decode("utf-8"))
+        decorator_len = reader.read_u32()
+        decorators = json.loads(reader.read(decorator_len).decode("utf-8"))
+
+    method_decorators = {}
+    if version >= 7:
+        method_decorator_len = reader.read_u32()
+        method_decorators = json.loads(reader.read(method_decorator_len).decode("utf-8"))
+
+    overloads = {}
+    if version >= 8:
+        overload_len = reader.read_u32()
+        overloads = json.loads(reader.read(overload_len).decode("utf-8"))
 
     # Functions
-    func_count = read_u32()
+    func_count = reader.read_u32()
     functions = []
     for _ in range(func_count):
-        fn_len = read_u32()
-        fn = _decode_function(read(fn_len))
+        fn_len = reader.read_u32()
+        fn = _decode_function(reader.read(fn_len), version)
         functions.append(fn)
+    reader.ensure_finished()
 
     return ProgramBytecode(
         functions=functions,
@@ -107,6 +157,8 @@ def deserialize(data: bytes) -> ProgramBytecode:
         classes=classes,
         py_imports=py_imports,
         decorators=decorators,
+        method_decorators=method_decorators,
+        overloads=overloads,
         entry=entry,
     )
 
@@ -137,32 +189,26 @@ def _encode_constants(constants: list) -> bytes:
 
 
 def _decode_constants(data: bytes) -> list:
-    offset = 0
+    reader = _ByteReader(data, "constant table")
 
-    def read(n: int) -> bytes:
-        nonlocal offset
-        chunk = data[offset : offset + n]
-        offset += n
-        return chunk
-
-    def read_u32() -> int:
-        return struct.unpack("<I", read(4))[0]
-
-    count = read_u32()
+    count = reader.read_u32()
     constants = []
     for _ in range(count):
-        tag = struct.unpack("<B", read(1))[0]
+        tag = reader.read_u8()
         if tag == 0:
-            constants.append(struct.unpack("<q", read(8))[0])
+            constants.append(reader.read_i64())
         elif tag == 1:
-            constants.append(struct.unpack("<d", read(8))[0])
+            constants.append(reader.read_f64())
         elif tag == 2:
-            slen = read_u32()
-            constants.append(read(slen).decode("utf-8"))
+            slen = reader.read_u32()
+            constants.append(reader.read(slen).decode("utf-8"))
         elif tag == 3:
-            constants.append(bool(struct.unpack("<B", read(1))[0]))
+            constants.append(bool(reader.read_u8()))
         elif tag == 4:
             constants.append(None)
+        else:
+            raise ValueError(f"Invalid constant table: unknown constant tag {tag}")
+    reader.ensure_finished()
     return constants
 
 
@@ -174,13 +220,20 @@ def _encode_function(fn: Function) -> bytes:
     parts.append(struct.pack("<I", fn.arity))
     parts.append(struct.pack("<I", fn.locals_count))
     parts.append(struct.pack("<B", 1 if fn.is_method else 0))
+    parts.append(struct.pack("<I", fn.capture_count))
 
     class_name = fn.class_name or ""
     cn_bytes = class_name.encode("utf-8")
     parts.append(struct.pack("<I", len(cn_bytes)))
     parts.append(cn_bytes)
 
-    # Code (signed int to support -1 sentinel for LOAD_VAR global)
+    signature_json = json.dumps(
+        {"param_types": fn.param_types, "type_params": fn.type_params}
+    ).encode("utf-8")
+    parts.append(struct.pack("<I", len(signature_json)))
+    parts.append(signature_json)
+
+    # Code uses signed ints for historical bytecode compatibility.
     code_data = struct.pack(f"<{len(fn.code)}i", *fn.code)
     parts.append(struct.pack("<I", len(fn.code)))
     parts.append(code_data)
@@ -192,31 +245,31 @@ def _encode_function(fn: Function) -> bytes:
     return b"".join(parts)
 
 
-def _decode_function(data: bytes) -> Function:
-    offset = 0
+def _decode_function(data: bytes, version: int = VERSION) -> Function:
+    reader = _ByteReader(data, "function record")
 
-    def read(n: int) -> bytes:
-        nonlocal offset
-        chunk = data[offset : offset + n]
-        offset += n
-        return chunk
+    name_len = reader.read_u32()
+    name = reader.read(name_len).decode("utf-8")
+    arity = reader.read_u32()
+    locals_count = reader.read_u32()
+    is_method = bool(reader.read_u8())
+    capture_count = reader.read_u32() if version >= 7 else 0
 
-    def read_u32() -> int:
-        return struct.unpack("<I", read(4))[0]
+    cn_len = reader.read_u32()
+    class_name = reader.read(cn_len).decode("utf-8") or None
 
-    name_len = read_u32()
-    name = read(name_len).decode("utf-8")
-    arity = read_u32()
-    locals_count = read_u32()
-    is_method = bool(struct.unpack("<B", read(1))[0])
+    param_types = []
+    type_params = []
+    if version >= 8:
+        signature_len = reader.read_u32()
+        signature = json.loads(reader.read(signature_len).decode("utf-8"))
+        param_types = signature.get("param_types", [])
+        type_params = signature.get("type_params", [])
 
-    cn_len = read_u32()
-    class_name = read(cn_len).decode("utf-8") or None
+    code_count = reader.read_u32()
+    code = list(struct.unpack(f"<{code_count}i", reader.read(code_count * 4)))
 
-    code_count = read_u32()
-    code = list(struct.unpack(f"<{code_count}i", read(code_count * 4)))
-
-    constants = _decode_constants(data[offset:])
+    constants = _decode_constants(reader.remaining())
 
     return Function(
         name=name,
@@ -226,4 +279,7 @@ def _decode_function(data: bytes) -> Function:
         locals_count=locals_count,
         is_method=is_method,
         class_name=class_name,
+        capture_count=capture_count,
+        param_types=param_types,
+        type_params=type_params,
     )

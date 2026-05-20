@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import main as suma_main
+from src.backend.codegen.opcodes import ProgramBytecode
 from src.backend.codegen.serializer import deserialize, serialize
+from src.cli import CompileSourceError
 from src.runtime.vm.vm import VM
 
 
@@ -31,15 +33,28 @@ pub main(): Int {
     assert VM(program).run() == 42
 
 
+def test_python_import_alias_direct_and_ir():
+    source = """
+import "py:math as m"
+
+pub main(): Int {
+    return to_int(m.sqrt(1764))
+}
+"""
+    assert _run(source) == 42
+    assert _run(source, use_ir=True) == 42
+
+
 def test_python_json_bridge_preserves_list_order():
     source = """
 import "py:json"
 
-pub main(): Str {
-    return json.dumps(List(1, 2, 3))
+pub main(): Int {
+    if (json.dumps(List(1, 2, 3)) == "[1, 2, 3]") { return 42 }
+    return 0
 }
 """
-    assert _run(source) == "[1, 2, 3]"
+    assert _run(source) == 42
 
 
 def test_python_dict_method_bridge():
@@ -77,6 +92,29 @@ pub main(): Int {
     loaded = deserialize(serialize(program))
     assert loaded.py_imports == {"math": "math"}
     assert VM(loaded).run() == 42
+
+
+def test_python_import_rejects_untrusted_module():
+    source = """
+import "py:os"
+
+pub main(): Int {
+    return 42
+}
+"""
+    try:
+        _compile(source)
+        assert False, "expected py:os to be rejected"
+    except CompileSourceError as exc:
+        assert "not allowed" in str(exc)
+
+
+def test_python_import_policy_is_enforced_at_vm_load_time():
+    try:
+        VM(ProgramBytecode(py_imports={"os": "os"}))
+        assert False, "expected VM to reject py:os"
+    except Exception as exc:
+        assert "not allowed" in str(exc)
 
 
 if __name__ == "__main__":

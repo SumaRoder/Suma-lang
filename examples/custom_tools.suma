@@ -1,0 +1,7 @@
+pub triple(n: Int): Int {
+    return n * 3
+}
+
+pub banner(name: Str): Str {
+    return "== " + name + " =="
+}

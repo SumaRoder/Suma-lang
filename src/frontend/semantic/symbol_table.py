@@ -1,7 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional, TypeAlias
+
+if TYPE_CHECKING:
+    from src.frontend.parser.ast_nodes import (
+        ClassDecl,
+        FunctionDecl,
+        GetterDecl,
+        ImportDecl,
+        Param,
+        SetterDecl,
+        VarDecl,
+    )
+
+    SymbolDecl: TypeAlias = (
+        ClassDecl | FunctionDecl | GetterDecl | ImportDecl | Param | SetterDecl | VarDecl | str
+    )
+else:
+    SymbolDecl = object
 
 
 @dataclass
@@ -9,7 +26,7 @@ class Symbol:
     name: str
     type_name: Optional[str]
     kind: str  # "var", "func", "class", "param", "builtin"
-    decl: object = None  # reference to AST node
+    decl: SymbolDecl | None = None  # reference to AST node
     is_pub: bool = False
     index: int = 0  # slot index in VM
 

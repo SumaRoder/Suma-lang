@@ -1,5 +1,5 @@
 Box {
-    value: Int
+    pub value: Int
     init(value: Int = 42) {
         this.value = value
     }

@@ -3,7 +3,7 @@ pub apply_twice(f: Function, value: Int): Int {
 }
 
 pub main(): Int {
-    add_ten: Function = fn(x: Int): Int { return x + 10 }
-    add_one: Function = fn(x: Int): Int { return x + 1 }
+    add_ten: Function = (x: Int): Int -> { return x + 10 }
+    add_one: Function = (x: Int): Int -> { return x + 1 }
     return apply_twice(add_ten, 20) + apply_twice(add_one, 0)
 }
