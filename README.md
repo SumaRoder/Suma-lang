@@ -42,7 +42,7 @@ pub main(): Int {
 
 ## Error Handling
 
-The language uses Result types instead of exceptions:
+The language uses Result types for recoverable errors:
 
 ```suma
 pub divide(a: Int, b: Int) {
@@ -119,9 +119,9 @@ tests/                 # Test suite
 ## Running Tests
 
 ```bash
-PYTHONPATH=. python tests/test_optimizer.py
-PYTHONPATH=. python tests/test_cli.py
-PYTHONPATH=. python tests/test_imports.py
+uv run pytest -q
+uv run ruff check .
+uv run pyright
 ```
 
 ## Command Line Options
@@ -133,6 +133,42 @@ suma execute <file>    # Run existing .sumac file
 suma -I <path>         # Add import search path
 suma --no-opt          # Disable optimizations
 ```
+
+`main(): Int` is treated as a process-style exit value. `0` is success and is
+not printed by the CLI; non-zero return values are printed for interactive use.
+
+## Python Host API
+
+Suma can be embedded from Python through the `suma_lang` package:
+
+```python
+import suma_lang
+
+source = """
+seed: Int
+result: Int
+
+pub main(): Int {
+    result = seed + 2
+    return result
+}
+"""
+
+program = suma_lang.compile_source(source)
+vm = suma_lang.create_vm(program)
+suma_lang.inject_environment(vm, {"seed": 40})
+
+assert vm.run() == 42
+assert vm.get_global("result") == 42
+```
+
+Useful API entry points:
+- `compile_source(source, filename="<stdin>", options=None)` compiles source to bytecode.
+- `create_vm(source_or_program, ...)` creates a VM from source text or bytecode.
+- `run_source(source, inject={...})` compiles and runs source in one call.
+- `run_program(program, inject={...})` runs already compiled bytecode.
+- `inject_environment(vm, values)` injects host Python values into Suma globals.
+- `make_environment(vm)` returns a host-side snapshot of VM globals.
 
 ## Adding Custom Imports
 

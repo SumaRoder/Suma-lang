@@ -1,6 +1,10 @@
-from src.cli import (
+"""Public Python API for embedding Suma-lang."""
+
+from src import (
+    VM,
     CompileOptions,
     CompileSourceError,
+    VMError,
     compile_source,
     create_vm,
     inject_environment,
@@ -8,7 +12,6 @@ from src.cli import (
     run_program,
     run_source,
 )
-from src.runtime.vm import VM, VMError
 
 __all__ = [
     "CompileOptions",
@@ -19,6 +22,6 @@ __all__ = [
     "create_vm",
     "inject_environment",
     "make_environment",
-    "run_program",
     "run_source",
+    "run_program",
 ]
