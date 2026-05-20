@@ -11,6 +11,9 @@ class Tokenizer:
         "if": TokenType.IF,
         "elif": TokenType.ELIF,
         "else": TokenType.ELSE,
+        "while": TokenType.WHILE,
+        "for": TokenType.FOR,
+        "in": TokenType.IN,
         "loop": TokenType.LOOP,
         "break": TokenType.BREAK,
         "continue": TokenType.CONTINUE,
@@ -20,13 +23,12 @@ class Tokenizer:
         "true": TokenType.TRUE,
         "false": TokenType.FALSE,
         "null": TokenType.NULL,
-        "getter": TokenType.GETTER,
-        "setter": TokenType.SETTER,
         "pub": TokenType.PUBLIC,
         "pri": TokenType.PRIVATE,
         "const": TokenType.CONST,
         "static": TokenType.STATIC,
         "is": TokenType.IS,
+        "class": TokenType.CLASS,
         "try": TokenType.TRY,
         "catch": TokenType.CATCH,
         "finally": TokenType.FINALLY,
@@ -40,16 +42,23 @@ class Tokenizer:
         token_list.append(Token(literal, info, type))
 
     @staticmethod
-    def _read_string(cs: CharStream, info: TokenInfo, quote: str) -> str:
+    def _read_string(
+        cs: CharStream, info: TokenInfo, quote: str, *, raw: bool = False, multiline: bool = False
+    ) -> str:
         closed = False
         chars = []
 
         while cs.has_next():
             ch = cs.next()
-            if ch == quote:
+            if multiline and ch == quote and cs.peek() == quote and cs.peek_at(1) == quote:
+                cs.next()
+                cs.next()
                 closed = True
                 break
-            if ch == "\\" and cs.has_next():
+            if not multiline and ch == quote:
+                closed = True
+                break
+            if not raw and ch == "\\" and cs.has_next():
                 nxt = cs.next()
                 chars.append(
                     {
@@ -71,29 +80,88 @@ class Tokenizer:
         return "".join(chars)
 
     @staticmethod
+    def _read_string_after_open_quote(
+        cs: CharStream, info: TokenInfo, quote: str, *, raw: bool = False
+    ) -> str:
+        multiline = False
+        if cs.peek() == quote and cs.peek_at(1) == quote:
+            cs.next()
+            cs.next()
+            multiline = True
+        return Tokenizer._read_string(cs, info, quote, raw=raw, multiline=multiline)
+
+    @staticmethod
+    def _is_identifier_part(ch: str) -> bool:
+        return ch.isalnum() or ch == "_"
+
+    @staticmethod
     def _read_number(cs: CharStream, info: TokenInfo, first: str) -> tuple[TokenType, str]:
-        sb = [first]
-        while cs.peek().isdigit():
-            sb.append(cs.next())
+        raw = [first]
+        normalized = [first]
+
+        if first == "0" and cs.peek() in "xX":
+            prefix = cs.next()
+            raw.append(prefix)
+            normalized.append(prefix)
+            hex_digits = 0
+            while cs.peek().isdigit() or cs.peek().lower() in "abcdef" or cs.peek() == "_":
+                if cs.peek() == "_":
+                    raw.append(cs.next())
+                    continue
+                ch = cs.next()
+                raw.append(ch)
+                normalized.append(ch)
+                hex_digits += 1
+            if Tokenizer._is_identifier_part(cs.peek()) or hex_digits == 0:
+                while Tokenizer._is_identifier_part(cs.peek()):
+                    raw.append(cs.next())
+                return (TokenType.ID, "".join(raw))
+            return (TokenType.INT, "".join(normalized))
+
+        while cs.peek().isdigit() or cs.peek() == "_":
+            if cs.peek() == "_":
+                raw.append(cs.next())
+                continue
+            ch = cs.next()
+            raw.append(ch)
+            normalized.append(ch)
+
+        if Tokenizer._is_identifier_part(cs.peek()):
+            while Tokenizer._is_identifier_part(cs.peek()):
+                raw.append(cs.next())
+            return (TokenType.ID, "".join(raw))
 
         is_float = False
-        if cs.peek() == ".":
+        if cs.peek() == "." and cs.peek_at(1) != ".":
             is_float = True
-            sb.append(cs.next())
+            ch = cs.next()
+            raw.append(ch)
+            normalized.append(ch)
             if not cs.peek().isdigit():
                 ErrorHandler.report(
                     info=info, reason="Invalid Float", source_line=cs.get_source_line(info.line)
                 )
             else:
-                while cs.peek().isdigit():
-                    sb.append(cs.next())
+                while cs.peek().isdigit() or cs.peek() == "_":
+                    if cs.peek() == "_":
+                        raw.append(cs.next())
+                        continue
+                    ch = cs.next()
+                    raw.append(ch)
+                    normalized.append(ch)
+            if Tokenizer._is_identifier_part(cs.peek()):
+                ErrorHandler.report(
+                    info=info,
+                    reason="Invalid numeric literal suffix",
+                    source_line=cs.get_source_line(info.line),
+                )
 
-        return (TokenType.FLOAT if is_float else TokenType.INT, "".join(sb))
+        return (TokenType.FLOAT if is_float else TokenType.INT, "".join(normalized))
 
     @staticmethod
     def _read_identifier(cs: CharStream, first: str) -> str:
         sb = [first]
-        while cs.peek().isalnum() or cs.peek() == "_":
+        while Tokenizer._is_identifier_part(cs.peek()):
             sb.append(cs.next())
         return "".join(sb)
 
@@ -106,6 +174,9 @@ class Tokenizer:
                 if cs.peek() == "=":
                     cs.next()
                     Tokenizer._add_token(token_list, TokenType.ADD_ASSIGN, info, "+=")
+                elif cs.peek() == "+":
+                    cs.next()
+                    Tokenizer._add_token(token_list, TokenType.PLUSPLUS, info, "++")
                 else:
                     Tokenizer._add_token(token_list, TokenType.ADD, info, "+")
             case "-":
@@ -115,6 +186,9 @@ class Tokenizer:
                 elif cs.peek() == ">":
                     cs.next()
                     Tokenizer._add_token(token_list, TokenType.ARROW, info, "->")
+                elif cs.peek() == "-":
+                    cs.next()
+                    Tokenizer._add_token(token_list, TokenType.MINUSMINUS, info, "--")
                 else:
                     Tokenizer._add_token(token_list, TokenType.MINUS, info, "-")
             case "=":
@@ -129,27 +203,6 @@ class Tokenizer:
                     Tokenizer._add_token(token_list, TokenType.MULT_ASSIGN, info, "*=")
                 else:
                     Tokenizer._add_token(token_list, TokenType.MULT, info, "*")
-            case "/":
-                if cs.peek() == "=":
-                    cs.next()
-                    Tokenizer._add_token(token_list, TokenType.DIV_ASSIGN, info, "/=")
-                elif cs.peek() == "/":
-                    cs.next()
-                    while cs.has_next() and cs.peek() not in "\n\r":
-                        cs.next()
-                elif cs.peek() == "*":
-                    cs.next()
-                    cnt = 1
-                    while cs.has_next() and cnt > 0:
-                        cur = cs.next()
-                        if cur == "*" and cs.peek() == "/":
-                            cs.next()
-                            cnt -= 1
-                        elif cur == "/" and cs.peek() == "*":
-                            cs.next()
-                            cnt += 1
-                else:
-                    Tokenizer._add_token(token_list, TokenType.DIV, info, "/")
             case "%":
                 if cs.peek() == "=":
                     cs.next()
@@ -206,7 +259,15 @@ class Tokenizer:
             case ",":
                 Tokenizer._add_token(token_list, TokenType.COMMA, info, ",")
             case ".":
-                Tokenizer._add_token(token_list, TokenType.DOT, info, ".")
+                if cs.peek() == ".":
+                    cs.next()
+                    if cs.peek() == "=":
+                        cs.next()
+                        Tokenizer._add_token(token_list, TokenType.RANGE_INCLUSIVE, info, "..=")
+                    else:
+                        Tokenizer._add_token(token_list, TokenType.RANGE, info, "..")
+                else:
+                    Tokenizer._add_token(token_list, TokenType.DOT, info, ".")
             case "#":
                 Tokenizer._add_token(token_list, TokenType.HASH, info, "#")
             case "@":
@@ -214,7 +275,11 @@ class Tokenizer:
             case ":":
                 Tokenizer._add_token(token_list, TokenType.COLON, info, ":")
             case "?":
-                Tokenizer._add_token(token_list, TokenType.QUEST, info, "?")
+                if cs.peek() == "?":
+                    cs.next()
+                    Tokenizer._add_token(token_list, TokenType.NULL_COALESCE, info, "??")
+                else:
+                    Tokenizer._add_token(token_list, TokenType.QUEST, info, "?")
             case _:
                 return False
         return True
@@ -256,11 +321,15 @@ class Tokenizer:
             elif c == "/":
                 Tokenizer._handle_slash(cs, info, token_list)
             elif c in "\"'":
-                content = Tokenizer._read_string(cs, info, c)
+                content = Tokenizer._read_string_after_open_quote(cs, info, c)
                 Tokenizer._add_token(token_list, TokenType.STRING, info, content)
             elif c.isdigit():
                 ttype, literal = Tokenizer._read_number(cs, info, c)
                 Tokenizer._add_token(token_list, ttype, info, literal)
+            elif c in "rR" and cs.peek() in "\"'":
+                quote = cs.next()
+                content = Tokenizer._read_string_after_open_quote(cs, info, quote, raw=True)
+                Tokenizer._add_token(token_list, TokenType.STRING, info, content)
             elif c.isalpha() or c == "_":
                 lex = Tokenizer._read_identifier(cs, c)
                 ttype = Tokenizer._KEYWORD_MAP.get(lex, TokenType.ID)

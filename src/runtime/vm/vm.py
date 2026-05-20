@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from types import ModuleType
 from typing import Any, Callable
 
 from src.backend.codegen.opcodes import Function, Op, ProgramBytecode
+from src.frontend.imports.resolver import is_python_import_allowed
 
 # Runtime values
+
+_MISSING = object()
 
 
 class SumaOk:
@@ -44,6 +48,30 @@ class SumaList:
         return len(self.items)
 
 
+class SumaRange:
+    __slots__ = ("start", "end", "inclusive")
+
+    def __init__(self, start: int, end: int, inclusive: bool = False) -> None:
+        self.start = start
+        self.end = end
+        self.inclusive = inclusive
+
+    def __len__(self) -> int:
+        stop = self.end + (1 if self.inclusive else 0)
+        return max(0, stop - self.start)
+
+    def __getitem__(self, index: int) -> int:
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        return self.start + index
+
+    def __repr__(self) -> str:
+        op = "..=" if self.inclusive else ".."
+        return f"Range({self.start}{op}{self.end})"
+
+
 class SumaObject:
     __slots__ = ("class_name", "fields")
 
@@ -64,6 +92,18 @@ class SumaLambda:
 
     def __repr__(self) -> str:
         return f"<lambda@{self.func_idx}>"
+
+
+class SumaOverload:
+    __slots__ = ("name", "candidates", "bound_this")
+
+    def __init__(self, name: str, candidates: list[int], bound_this: Any = None) -> None:
+        self.name = name
+        self.candidates = candidates
+        self.bound_this = bound_this
+
+    def __repr__(self) -> str:
+        return f"<overload {self.name}>"
 
 
 class SumaCallable:
@@ -90,30 +130,23 @@ class SumaCallable:
             self.vm._call_value(self.value, [_from_python_value(arg) for arg in args])
         )
 
-    def _make_python_callable(self) -> Callable:
-        if self.arity == 0:
-
-            def callback():
-                return self._invoke([])
-        elif self.arity == 1:
-
-            def callback(arg0):
-                return self._invoke([arg0])
-        elif self.arity == 2:
-
-            def callback(arg0, arg1):
-                return self._invoke([arg0, arg1])
-        elif self.arity == 3:
-
-            def callback(arg0, arg1, arg2):
-                return self._invoke([arg0, arg1, arg2])
+    def _make_python_callable(self) -> Callable[..., Any]:
+        if 0 <= self.arity <= 32:
+            params = ", ".join(f"arg{i}" for i in range(self.arity))
+            args = ", ".join(f"arg{i}" for i in range(self.arity))
+            body_args = f"[{args}]" if args else "[]"
+            namespace: dict[str, Any] = {"invoke": self._invoke}
+            exec(f"def callback({params}):\n    return invoke({body_args})", namespace)
+            callback = namespace["callback"]
         else:
 
-            def callback(*args):
+            def callback_any(*args):
                 return self._invoke(list(args))
 
+            callback = callback_any
+
         callback.__name__ = self.name.replace(".", "_").replace("<", "_").replace(">", "_")
-        callback.__suma_value__ = self.value
+        setattr(callback, "__suma_value__", self.value)
         return callback
 
     def __call__(self, *args: Any) -> Any:
@@ -147,10 +180,12 @@ def _to_python_value(value: Any) -> Any:
         return value.value
     if isinstance(value, SumaCallable):
         return value.python_callable
-    if isinstance(value, (SumaLambda, str)):
+    if isinstance(value, (SumaLambda, SumaOverload, str)):
         return value
     if isinstance(value, SumaList):
         return [_to_python_value(item) for item in value.items]
+    if isinstance(value, SumaRange):
+        return range(value.start, value.end + (1 if value.inclusive else 0))
     if isinstance(value, SumaOk):
         return {"ok": _to_python_value(value.value)}
     if isinstance(value, SumaErr):
@@ -165,7 +200,18 @@ def _from_python_value(value: Any) -> Any:
     if suma_value is not None:
         return suma_value
     if isinstance(
-        value, (SumaPyObject, SumaCallable, SumaLambda, SumaList, SumaOk, SumaErr, SumaObject)
+        value,
+        (
+            SumaPyObject,
+            SumaCallable,
+            SumaLambda,
+            SumaOverload,
+            SumaList,
+            SumaRange,
+            SumaOk,
+            SumaErr,
+            SumaObject,
+        ),
     ):
         return value
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -207,6 +253,7 @@ class OC:
     LOAD_VAR = int(Op.LOAD_VAR)
     STORE_VAR = int(Op.STORE_VAR)
     LOAD_GLOBAL = int(Op.LOAD_GLOBAL)
+    STORE_GLOBAL = int(Op.STORE_GLOBAL)
     CALL_GLOBAL = int(Op.CALL_GLOBAL)
     LOAD_FUNC = int(Op.LOAD_FUNC)
     LOAD_TRUE = int(Op.LOAD_TRUE)
@@ -244,6 +291,7 @@ class OC:
     CALL = int(Op.CALL)
     RETURN = int(Op.RETURN)
     MAKE_LIST = int(Op.MAKE_LIST)
+    MAKE_RANGE = int(Op.MAKE_RANGE)
     MAKE_OK = int(Op.MAKE_OK)
     MAKE_ERR = int(Op.MAKE_ERR)
     INDEX = int(Op.INDEX)
@@ -281,12 +329,16 @@ def _to_str_fast(val: Any) -> str:
         return str(val)
     if _isinstance(val, SumaList):
         return val.__repr__()
+    if _isinstance(val, SumaRange):
+        return val.__repr__()
     if _isinstance(val, SumaOk):
         return val.__repr__()
     if _isinstance(val, SumaErr):
         return val.__repr__()
     if _isinstance(val, SumaObject):
         return f"{val.class_name} instance"
+    if _isinstance(val, SumaOverload):
+        return repr(val)
     if _isinstance(val, SumaCallable):
         return repr(val)
     if _isinstance(val, SumaPyObject):
@@ -314,21 +366,81 @@ def _apply_binop_fast(op_code: int, a: Any, b: Any) -> Any:
     return a % b
 
 
+def _compare_values(left: Any, right: Any, cmp_code: int) -> bool:
+    if cmp_code == 0:
+        return left == right
+    if cmp_code == 1:
+        return left != right
+    if cmp_code == 2:
+        return left > right
+    if cmp_code == 3:
+        return left < right
+    if cmp_code == 4:
+        return left >= right
+    return left <= right
+
+
 class VM:
+    _INITIAL_STACK_SIZE = 1024
+    _STACK_HEADROOM = 64
+
     def __init__(self, program: ProgramBytecode) -> None:
         self.program = program
         self.stack: list[Any] = []
         self.frames: list[Frame] = []
         self.globals: dict[str, Any] = {}
         self._func_map: dict[str, int] = {}  # name -> function index
-        for i, fn in enumerate(program.functions):
-            self._func_map[fn.name] = i
         self._pending_push: Any = None  # object to push after init returns
         self._frame_pool: list[Frame] = []
         self._frame_pool_idx: int = 0
+        self._index_functions()
         self._init_builtins()
         self._init_python_imports()
         self._init_decorators()
+
+    def _index_functions(self) -> None:
+        self._func_map.clear()
+        for i, fn in enumerate(self.program.functions):
+            self._func_map[fn.name] = i
+
+    def load_program(self, program: ProgramBytecode, *, reset_globals: bool = False) -> None:
+        """Replace the executable program while keeping host-injected globals by default."""
+        self.program = program
+        self.stack.clear()
+        self.frames.clear()
+        self._pending_push = None
+        self._frame_pool.clear()
+        self._frame_pool_idx = 0
+        if reset_globals:
+            self.globals.clear()
+        self._index_functions()
+        self._init_builtins()
+        self._init_python_imports()
+        self._init_decorators()
+
+    def inject(self, name: str, value: Any) -> None:
+        """Set a host-provided global value for Suma code."""
+        self.globals[name] = _from_python_value(value)
+
+    def inject_many(self, values: dict[str, Any]) -> None:
+        """Set multiple host-provided global values for Suma code."""
+        for name, value in values.items():
+            self.inject(name, value)
+
+    def get_global(self, name: str, default: Any = _MISSING) -> Any:
+        """Return a global value converted back to a host Python value."""
+        if name in self.globals:
+            return _to_python_value(self.globals[name])
+        if default is not _MISSING:
+            return default
+        raise KeyError(name)
+
+    def environment(self) -> dict[str, Any]:
+        """Return a snapshot of host-visible Suma globals."""
+        return {name: _to_python_value(value) for name, value in self.globals.items()}
+
+    def _new_stack(self) -> list[Any]:
+        return [None] * self._INITIAL_STACK_SIZE
 
     def _init_builtins(self) -> None:
         """Register built-in functions."""
@@ -365,18 +477,27 @@ class VM:
     def _init_python_imports(self) -> None:
         """Import host Python modules declared by `import "py:..."`."""
         for alias, module_name in self.program.py_imports.items():
+            if not is_python_import_allowed(module_name):
+                raise VMError(
+                    f"Python import '{module_name}' is not allowed; "
+                    "set SUMA_PY_IMPORTS to allow trusted modules"
+                )
+            old_dont_write_bytecode = sys.dont_write_bytecode
             try:
+                sys.dont_write_bytecode = True
                 self.globals[alias] = SumaPyObject(importlib.import_module(module_name))
             except Exception as exc:
                 raise VMError(
                     f"Cannot import Python module '{module_name}' as '{alias}': {exc}"
                 ) from exc
+            finally:
+                sys.dont_write_bytecode = old_dont_write_bytecode
 
     def _init_decorators(self) -> None:
-        """Apply top-level function decorators before `main` starts."""
+        """Apply global function/class decorators before `main` starts."""
         if not self.program.decorators:
             return
-        self.stack = [None] * 10000
+        self.stack = self._new_stack()
         self._sp = 0
         saved_frames = self.frames
         self.frames = []
@@ -398,8 +519,9 @@ class VM:
         old_frames = self.frames
         old_stack = self.stack
         old_sp = getattr(self, "_sp", 0)
+        old_frame_pool_idx = self._frame_pool_idx
         self.frames = [frame]
-        self.stack = [None] * 10000
+        self.stack = self._new_stack()
         self._sp = 0
         try:
             return self._execute()
@@ -407,12 +529,44 @@ class VM:
             self.frames = old_frames
             self.stack = old_stack
             self._sp = old_sp
-            self._frame_pool_idx = max(self._frame_pool_idx - 1, 0)
+            self._frame_pool_idx = old_frame_pool_idx
+
+    def _call_lambda(self, callee: SumaLambda, args: list[Any]) -> Any:
+        fn = self.program.functions[callee.func_idx]
+        frame = self._alloc_frame(fn, 0)
+        for i, value in enumerate(callee.closure):
+            if i < len(frame.slots):
+                frame.slots[i] = value
+        offset = len(callee.closure)
+        for i, arg in enumerate(args):
+            slot = i + offset
+            if slot < len(frame.slots):
+                frame.slots[slot] = arg
+        if fn.is_method and callee.closure:
+            frame.this = callee.closure[0]
+        old_frames = self.frames
+        old_stack = self.stack
+        old_sp = getattr(self, "_sp", 0)
+        old_frame_pool_idx = self._frame_pool_idx
+        self.frames = [frame]
+        self.stack = self._new_stack()
+        self._sp = 0
+        try:
+            return self._execute()
+        finally:
+            self.frames = old_frames
+            self.stack = old_stack
+            self._sp = old_sp
+            self._frame_pool_idx = old_frame_pool_idx
 
     def _call_value(self, callee: Any, args: list[Any]) -> Any:
         if isinstance(callee, str):
             if callee in self.globals:
                 callee = self.globals[callee]
+            elif callee in self.program.overloads:
+                return self._call_overload(
+                    SumaOverload(callee, self.program.overloads[callee]), args
+                )
             elif callee in self._func_map:
                 return self._call_function_index(self._func_map[callee], args)
             elif callee in self._builtins:
@@ -427,14 +581,116 @@ class VM:
                         obj.items.append(args[0])
                     return None
                 raise VMError("Unknown special lambda")
-            fn = self.program.functions[callee.func_idx]
-            call_args = list(args)
-            if fn.is_method and callee.closure:
-                call_args = [callee.closure[0], *call_args]
-            return self._call_function_index(callee.func_idx, call_args)
+            return self._call_lambda(callee, args)
+        if isinstance(callee, SumaOverload):
+            return self._call_overload(callee, args)
         if isinstance(callee, SumaPyObject):
             return self._call_python(callee, args)
         raise VMError(f"Cannot call {type(callee)}")
+
+    def _decorate_bound_method(self, class_name: str, method_name: str, bound: SumaLambda) -> Any:
+        init_idx = self.program.method_decorators.get(f"{class_name}.{method_name}")
+        if init_idx is None:
+            return bound
+        return self._call_function_index(init_idx, [bound])
+
+    def _base_type(self, type_name: str | None) -> str | None:
+        if type_name is None or "<" not in type_name:
+            return type_name
+        return type_name.split("<", 1)[0]
+
+    def _runtime_type_name(self, value: Any) -> str:
+        if value is None:
+            return "Null"
+        if type(value) is bool:
+            return "Bool"
+        if type(value) is int:
+            return "Int"
+        if type(value) is float:
+            return "Float"
+        if isinstance(value, str):
+            return "Str"
+        if isinstance(value, SumaList):
+            return "List"
+        if isinstance(value, SumaRange):
+            return "Range"
+        if isinstance(value, SumaOk):
+            return "Ok"
+        if isinstance(value, SumaErr):
+            return "Err"
+        if isinstance(value, SumaObject):
+            return value.class_name
+        if isinstance(value, SumaPyObject):
+            return "PyObject"
+        if isinstance(value, (SumaLambda, SumaOverload, SumaCallable)):
+            return "Function"
+        return type(value).__name__
+
+    def _score_overload_arg(
+        self, expected: str | None, value: Any, type_params: list[str], bindings: dict[str, str]
+    ) -> int | None:
+        if expected is None or expected == "Any":
+            return 1
+        if expected in type_params:
+            actual = self._runtime_type_name(value)
+            bound = bindings.get(expected)
+            if bound is None:
+                bindings[expected] = actual
+                return 2
+            return 2 if bound == actual else None
+        expected_base = self._base_type(expected)
+        actual = self._runtime_type_name(value)
+        if expected_base == actual:
+            return 4
+        if expected_base == "Float" and actual == "Int":
+            return 2
+        if expected_base == "R" and actual in ("Ok", "Err"):
+            return 2
+        return None
+
+    def _select_overload(self, candidates: list[int], args: list[Any]) -> int:
+        matches: list[tuple[int, int]] = []
+        for func_idx in candidates:
+            fn = self.program.functions[func_idx]
+            if fn.arity != len(args):
+                continue
+            bindings: dict[str, str] = {}
+            score = 0
+            param_types = fn.param_types or [None] * fn.arity
+            for expected, value in zip(param_types, args):
+                arg_score = self._score_overload_arg(expected, value, fn.type_params, bindings)
+                if arg_score is None:
+                    break
+                score += arg_score
+            else:
+                matches.append((score, func_idx))
+        if not matches:
+            arg_types = [self._runtime_type_name(arg) for arg in args]
+            raise VMError(f"No overload matches runtime argument types {arg_types}")
+        matches.sort(reverse=True)
+        if len(matches) > 1 and matches[0][0] == matches[1][0]:
+            arg_types = [self._runtime_type_name(arg) for arg in args]
+            raise VMError(f"Ambiguous overload for runtime argument types {arg_types}")
+        return matches[0][1]
+
+    def _call_overload(self, overload: SumaOverload, args: list[Any]) -> Any:
+        func_idx = self._select_overload(overload.candidates, args)
+        if overload.bound_this is not None:
+            return self._call_lambda(SumaLambda(func_idx, [overload.bound_this]), args)
+        return self._call_function_index(func_idx, args)
+
+    def _call_operator_method(self, left: Any, method_name: str, args: list[Any]) -> Any:
+        if not isinstance(left, SumaObject):
+            return _MISSING
+        class_info = self.program.classes.get(left.class_name, {})
+        method_overloads = class_info.get("method_overloads", {})
+        candidates = method_overloads.get(method_name)
+        if candidates:
+            return self._call_overload(SumaOverload(method_name, candidates, left), args)
+        methods = class_info.get("methods", {})
+        if method_name in methods:
+            return self._call_lambda(SumaLambda(methods[method_name], [left]), args)
+        return _MISSING
 
     def _alloc_frame(self, func: Function, stack_base: int) -> Frame:
         idx = self._frame_pool_idx
@@ -461,7 +717,7 @@ class VM:
         entry_fn = self.program.functions[self.program.entry]
         frame = self._alloc_frame(entry_fn, 0)
         self.frames.append(frame)
-        self.stack = [None] * 10000
+        self.stack = self._new_stack()
         self._sp = 0
         return self._execute()
 
@@ -475,6 +731,8 @@ class VM:
         functions = program.functions
         constants = program.constants
         classes = program.classes
+        method_decorators = program.method_decorators
+        overloads = program.overloads
         globals_ = self.globals
         func_map = self._func_map
         builtins = self._builtins
@@ -482,6 +740,8 @@ class VM:
         py_index = self._python_index
         py_slice = self._python_slice
         py_call = self._call_python
+        call_overload = self._call_overload
+        select_overload = self._select_overload
         pending_push = self._pending_push
         frame_pool = self._frame_pool
         fpi = self._frame_pool_idx
@@ -490,8 +750,10 @@ class VM:
         _SumaOk = SumaOk
         _SumaErr = SumaErr
         _SumaList = SumaList
+        _SumaRange = SumaRange
         _SumaObject = SumaObject
         _SumaLambda = SumaLambda
+        _SumaOverload = SumaOverload
         _SumaCallable = SumaCallable
         _SumaPyObject = SumaPyObject
         _VMError = VMError
@@ -505,7 +767,18 @@ class VM:
         fc = fn.constants
         fc_len = len(fc)
 
+        def call_operator(left: Any, method_name: str, args: list[Any]) -> Any:
+            nonlocal fpi, sp
+            frame.ip = ip
+            self._sp = sp
+            self._frame_pool_idx = fpi
+            result = self._call_operator_method(left, method_name, args)
+            fpi = self._frame_pool_idx
+            return result
+
         while ip < code_len:
+            if sp + self._STACK_HEADROOM >= len(stack):
+                stack.extend([None] * len(stack))
             op = code[ip]
             ip += 1
 
@@ -519,31 +792,23 @@ class VM:
                 case OC.LOAD_VAR:
                     slot = code[ip]
                     ip += 1
-                    if slot >= 0:
-                        stack[sp] = slots[slot]
-                    else:
-                        stack[sp] = None
+                    if slot < 0:
+                        raise _VMError(f"Invalid local slot: {slot}")
+                    stack[sp] = slots[slot]
                     sp += 1
                 case OC.STORE_VAR:
                     slot = code[ip]
                     ip += 1
-                    if slot >= 0:
-                        slots[slot] = stack[sp - 1]
-                    else:
-                        if sp >= 2 and _isinstance(stack[sp - 2], str):
-                            val = stack[sp - 1]
-                            name = stack[sp - 2]
-                            globals_[name] = val
-                            stack[sp - 2] = val
-                            sp -= 1
-                        else:
-                            sp -= 1
-                            globals_[stack[sp]] = stack[sp]
+                    if slot < 0:
+                        raise _VMError(f"Invalid local slot: {slot}")
+                    slots[slot] = stack[sp - 1]
                 case OC.LOAD_GLOBAL:
                     name = constants[code[ip]]
                     ip += 1
                     if name in globals_:
                         stack[sp] = globals_[name]
+                    elif name in overloads:
+                        stack[sp] = name
                     elif name in func_map:
                         stack[sp] = name
                     elif name in builtins:
@@ -551,6 +816,10 @@ class VM:
                     else:
                         stack[sp] = None
                     sp += 1
+                case OC.STORE_GLOBAL:
+                    name = constants[code[ip]]
+                    ip += 1
+                    globals_[name] = stack[sp - 1]
                 case OC.LOAD_FUNC:
                     func_idx = code[ip]
                     ip += 1
@@ -561,7 +830,10 @@ class VM:
                 case OC.ADD:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    if _isinstance(a, int) and _isinstance(b, int):
+                    result = call_operator(a, "op_add", [b])
+                    if result is not _MISSING:
+                        stack[sp - 2] = result
+                    elif _isinstance(a, int) and _isinstance(b, int):
                         stack[sp - 2] = a + b
                     elif _isinstance(a, str) or _isinstance(b, str):
                         stack[sp - 2] = _to_str_fast(a) + _to_str_fast(b)
@@ -571,42 +843,76 @@ class VM:
                         stack[sp - 2] = a + b
                     sp -= 1
                 case OC.SUB:
-                    stack[sp - 2] = stack[sp - 2] - stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_sub", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a - b
                     sp -= 1
                 case OC.MUL:
-                    stack[sp - 2] = stack[sp - 2] * stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_mul", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a * b
                     sp -= 1
                 case OC.DIV:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    if b == 0:
-                        raise _VMError("Division by zero")
-                    stack[sp - 2] = a // b if _isinstance(a, int) and _isinstance(b, int) else a / b
+                    result = call_operator(a, "op_div", [b])
+                    if result is not _MISSING:
+                        stack[sp - 2] = result
+                    else:
+                        if b == 0:
+                            raise _VMError("Division by zero")
+                        stack[sp - 2] = (
+                            a // b if _isinstance(a, int) and _isinstance(b, int) else a / b
+                        )
                     sp -= 1
                 case OC.MOD:
-                    stack[sp - 2] = stack[sp - 2] % stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_mod", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a % b
                     sp -= 1
                 case OC.NEG:
-                    stack[sp - 1] = -stack[sp - 1]
+                    result = call_operator(stack[sp - 1], "op_neg", [])
+                    stack[sp - 1] = result if result is not _MISSING else -stack[sp - 1]
 
                 # Hot path: comparison
                 case OC.EQ:
-                    stack[sp - 2] = stack[sp - 2] == stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_eq", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a == b
                     sp -= 1
                 case OC.NE:
-                    stack[sp - 2] = stack[sp - 2] != stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_ne", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a != b
                     sp -= 1
                 case OC.GT:
-                    stack[sp - 2] = stack[sp - 2] > stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_gt", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a > b
                     sp -= 1
                 case OC.LT:
-                    stack[sp - 2] = stack[sp - 2] < stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_lt", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a < b
                     sp -= 1
                 case OC.GE:
-                    stack[sp - 2] = stack[sp - 2] >= stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_ge", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a >= b
                     sp -= 1
                 case OC.LE:
-                    stack[sp - 2] = stack[sp - 2] <= stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_le", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a <= b
                     sp -= 1
 
                 # Hot path: control flow
@@ -630,18 +936,7 @@ class VM:
                     cmp_code = code[ip + 2]
                     target = code[ip + 3]
                     ip += 4
-                    if cmp_code == 0:
-                        test = left == right
-                    elif cmp_code == 1:
-                        test = left != right
-                    elif cmp_code == 2:
-                        test = left > right
-                    elif cmp_code == 3:
-                        test = left < right
-                    elif cmp_code == 4:
-                        test = left >= right
-                    else:
-                        test = left <= right
+                    test = _compare_values(left, right, cmp_code)
                     if not test:
                         ip = target
                 case OC.JUMP_IF_VAR_CONST_CMP:
@@ -651,18 +946,7 @@ class VM:
                     cmp_code = code[ip + 2]
                     target = code[ip + 3]
                     ip += 4
-                    if cmp_code == 0:
-                        test = left == right
-                    elif cmp_code == 1:
-                        test = left != right
-                    elif cmp_code == 2:
-                        test = left > right
-                    elif cmp_code == 3:
-                        test = left < right
-                    elif cmp_code == 4:
-                        test = left >= right
-                    else:
-                        test = left <= right
+                    test = _compare_values(left, right, cmp_code)
                     if not test:
                         ip = target
 
@@ -744,6 +1028,18 @@ class VM:
                     base = sp - nargs
                     callee = stack[base - 1]
                     if _isinstance(callee, str):
+                        if callee in overloads:
+                            args = stack[base:sp]
+                            sp = base - 1
+                            frame.ip = ip
+                            self._sp = sp
+                            self._frame_pool_idx = fpi
+                            stack[sp] = call_overload(
+                                _SumaOverload(callee, overloads[callee]), args
+                            )
+                            fpi = self._frame_pool_idx
+                            sp += 1
+                            continue
                         if callee in func_map:
                             fn2 = functions[func_map[callee]]
                             n = fn2.locals_count
@@ -812,9 +1108,12 @@ class VM:
                             nf_this = callee.closure[0]
                         else:
                             nf_this = None
-                        offset = 1 if fn2.is_method else 0
+                        offset = len(callee.closure)
                         for i in range(nargs):
-                            new_slots[i + offset] = args[i]
+                            slot = i + offset
+                            if slot >= n:
+                                raise _VMError(f"Too many arguments for lambda: {nargs}")
+                            new_slots[slot] = args[i]
                         if fpi < len(frame_pool):
                             nf = frame_pool[fpi]
                             nf.func = fn2
@@ -840,6 +1139,14 @@ class VM:
                         fc = fn.constants
                         fc_len = len(fc)
                         continue
+                    if _isinstance(callee, _SumaOverload):
+                        frame.ip = ip
+                        self._sp = sp
+                        self._frame_pool_idx = fpi
+                        stack[sp] = call_overload(callee, args)
+                        fpi = self._frame_pool_idx
+                        sp += 1
+                        continue
                     if _isinstance(callee, _SumaPyObject):
                         wrapped_args = [
                             _SumaCallable(self, arg, "<arg>")
@@ -859,13 +1166,14 @@ class VM:
                     if not frames:
                         self._frame_pool_idx = fpi
                         return val
-                    stack[sp] = val
-                    sp += 1
                     if pending_push is not None:
                         stack[sp] = pending_push
                         sp += 1
                         self._pending_push = None
                         pending_push = None
+                    else:
+                        stack[sp] = val
+                        sp += 1
                     frame = frames[-1]
                     fn = frame.func
                     code = fn.code
@@ -902,26 +1210,43 @@ class VM:
 
                 # Bitwise
                 case OC.BIT_AND:
-                    stack[sp - 2] = stack[sp - 2] & stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_bit_and", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a & b
                     sp -= 1
                 case OC.BIT_OR:
-                    stack[sp - 2] = stack[sp - 2] | stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_bit_or", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a | b
                     sp -= 1
                 case OC.BIT_XOR:
-                    stack[sp - 2] = stack[sp - 2] ^ stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_bit_xor", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a ^ b
                     sp -= 1
                 case OC.BIT_NOT:
-                    stack[sp - 1] = ~stack[sp - 1]
+                    result = call_operator(stack[sp - 1], "op_bit_not", [])
+                    stack[sp - 1] = result if result is not _MISSING else ~stack[sp - 1]
                 case OC.SHL:
-                    stack[sp - 2] = stack[sp - 2] << stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_shl", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a << b
                     sp -= 1
                 case OC.SHR:
-                    stack[sp - 2] = stack[sp - 2] >> stack[sp - 1]
+                    b = stack[sp - 1]
+                    a = stack[sp - 2]
+                    result = call_operator(a, "op_shr", [b])
+                    stack[sp - 2] = result if result is not _MISSING else a >> b
                     sp -= 1
 
                 # Logic
                 case OC.NOT:
-                    stack[sp - 1] = not stack[sp - 1]
+                    result = call_operator(stack[sp - 1], "op_not", [])
+                    stack[sp - 1] = result if result is not _MISSING else not stack[sp - 1]
                 case OC.AND:
                     stack[sp - 2] = stack[sp - 2] and stack[sp - 1]
                     sp -= 1
@@ -954,18 +1279,7 @@ class VM:
                     while True:
                         left = slots[left_slot]
                         right = slots[right_slot]
-                        if cmp_code == 0:
-                            test = left == right
-                        elif cmp_code == 1:
-                            test = left != right
-                        elif cmp_code == 2:
-                            test = left > right
-                        elif cmp_code == 3:
-                            test = left < right
-                        elif cmp_code == 4:
-                            test = left >= right
-                        else:
-                            test = left <= right
+                        test = _compare_values(left, right, cmp_code)
                         if test:
                             break
                         j = ops_base
@@ -988,6 +1302,15 @@ class VM:
                     base = sp - count
                     stack[base] = _SumaList(stack[base:sp])
                     sp = base + 1
+                case OC.MAKE_RANGE:
+                    inclusive = bool(code[ip])
+                    ip += 1
+                    end = stack[sp - 1]
+                    start = stack[sp - 2]
+                    if not _isinstance(start, int) or not _isinstance(end, int):
+                        raise _VMError("Range bounds must be Int")
+                    stack[sp - 2] = _SumaRange(start, end, inclusive)
+                    sp -= 1
                 case OC.MAKE_OK:
                     stack[sp - 1] = _SumaOk(stack[sp - 1])
                 case OC.MAKE_ERR:
@@ -1000,6 +1323,11 @@ class VM:
                             stack[sp - 2] = obj.items[idx if idx >= 0 else len(obj.items) + idx]
                         else:
                             raise _VMError(f"List index must be Int, got {type(idx)}")
+                    elif _isinstance(obj, _SumaRange):
+                        if _isinstance(idx, int):
+                            stack[sp - 2] = obj[idx]
+                        else:
+                            raise _VMError(f"Range index must be Int, got {type(idx)}")
                     elif _isinstance(obj, str):
                         stack[sp - 2] = obj[idx]
                     elif _isinstance(obj, _SumaPyObject):
@@ -1038,50 +1366,63 @@ class VM:
                     ip += 1
                     obj = stack[sp - 1]
                     if _isinstance(obj, _SumaObject):
+                        ci = program.classes.get(obj.class_name, {})
+                        mths = ci.get("methods", {})
+                        getters = ci.get("getters", {})
+                        getter_idx = getters.get(name)
+                        if getter_idx is not None:
+                            getter_fn = functions[getter_idx]
+                            n = getter_fn.locals_count
+                            if n < 1:
+                                n = 1
+                            new_slots: list[Any] = [None] * n
+                            new_slots[0] = obj
+                            sp -= 1
+                            if fpi < len(frame_pool):
+                                nf = frame_pool[fpi]
+                                nf.func = getter_fn
+                                nf.ip = 0
+                                nf.slots = new_slots
+                                nf.stack_base = sp
+                                nf.this = obj
+                                nf.it = None
+                            else:
+                                nf = Frame(getter_fn, sp)
+                                nf.slots = new_slots
+                                nf.this = obj
+                                frame_pool.append(nf)
+                            fpi += 1
+                            frames.append(nf)
+                            frame.ip = ip
+                            frame = nf
+                            fn = getter_fn
+                            code = fn.code
+                            code_len = len(code)
+                            ip = 0
+                            slots = new_slots
+                            fc = fn.constants
+                            fc_len = len(fc)
+                            continue
                         if name in obj.fields:
                             stack[sp - 1] = obj.fields[name]
                         else:
-                            ci = program.classes.get(obj.class_name, {})
-                            mths = ci.get("methods", {})
-                            if name in mths:
-                                stack[sp - 1] = _SumaLambda(mths[name], [obj])
-                            else:
-                                getter = f"get_{name}"
-                                if getter in mths:
-                                    getter_fn = functions[mths[getter]]
-                                    n = getter_fn.locals_count
-                                    if n < 1:
-                                        n = 1
-                                    new_slots = [None] * n
-                                    new_slots[0] = obj
-                                    sp -= 1
-                                    if fpi < len(frame_pool):
-                                        nf = frame_pool[fpi]
-                                        nf.func = getter_fn
-                                        nf.ip = 0
-                                        nf.slots = new_slots
-                                        nf.stack_base = sp
-                                        nf.this = obj
-                                        nf.it = None
-                                    else:
-                                        nf = Frame(getter_fn, sp)
-                                        nf.slots = new_slots
-                                        nf.this = obj
-                                        frame_pool.append(nf)
-                                    fpi += 1
-                                    frames.append(nf)
+                            method_overloads = ci.get("method_overloads", {})
+                            if name in method_overloads:
+                                stack[sp - 1] = _SumaOverload(name, method_overloads[name], obj)
+                            elif name in mths:
+                                bound_method = _SumaLambda(mths[name], [obj])
+                                decorator_idx = method_decorators.get(f"{obj.class_name}.{name}")
+                                if decorator_idx is not None:
                                     frame.ip = ip
-                                    frame = nf
-                                    fn = getter_fn
-                                    code = fn.code
-                                    code_len = len(code)
-                                    ip = 0
-                                    slots = new_slots
-                                    fc = fn.constants
-                                    fc_len = len(fc)
-                                    continue
-                                else:
-                                    raise _VMError(f"No member '{name}' on {obj.class_name}")
+                                    self._sp = sp
+                                    self._frame_pool_idx = fpi
+                                    bound_method = self._call_function_index(
+                                        decorator_idx, [bound_method]
+                                    )
+                                    fpi = self._frame_pool_idx
+                                stack[sp - 1] = bound_method
+                            else:
+                                raise _VMError(f"No member '{name}' on {obj.class_name}")
                     elif _isinstance(obj, _SumaList):
                         if name == "size":
                             stack[sp - 1] = len(obj.items)
@@ -1089,6 +1430,17 @@ class VM:
                             stack[sp - 1] = _SumaLambda(-1, [obj])
                         else:
                             raise _VMError(f"No member '{name}' on List")
+                    elif _isinstance(obj, _SumaRange):
+                        if name == "size":
+                            stack[sp - 1] = len(obj)
+                        elif name == "start":
+                            stack[sp - 1] = obj.start
+                        elif name == "end":
+                            stack[sp - 1] = obj.end
+                        elif name == "inclusive":
+                            stack[sp - 1] = obj.inclusive
+                        else:
+                            raise _VMError(f"No member '{name}' on Range")
                     elif _isinstance(obj, str):
                         if name == "size":
                             stack[sp - 1] = len(obj)
@@ -1114,6 +1466,20 @@ class VM:
                     val = stack[sp - 1]
                     obj = stack[sp - 2]
                     if _isinstance(obj, _SumaObject):
+                        ci = program.classes.get(obj.class_name, {})
+                        setters = ci.get("setters", {})
+                        setter_idx = setters.get(name)
+                        if setter_idx is not None:
+                            sp -= 2
+                            frame.ip = ip
+                            self._sp = sp
+                            self._frame_pool_idx = fpi
+                            self._call_lambda(_SumaLambda(setter_idx, [obj]), [val])
+                            fpi = self._frame_pool_idx
+                            stack = self.stack
+                            stack[sp] = val
+                            sp += 1
+                            continue
                         obj.fields[name] = val
                     else:
                         raise _VMError(f"Cannot set member on {type(obj)}")
@@ -1137,18 +1503,23 @@ class VM:
                 # Object creation
                 case OC.MAKE_OBJECT:
                     class_name = constants[code[ip]]
-                    ip += 1
+                    nargs = code[ip + 1]
+                    ip += 2
                     ci = classes.get(class_name, {})
                     obj = _SumaObject(class_name, {f: None for f in ci.get("fields", [])})
                     mths = ci.get("methods", {})
-                    if "init" in mths:
-                        init_fn = functions[mths["init"]]
-                        nargs = init_fn.arity
+                    method_overloads = ci.get("method_overloads", {})
+                    init_idx = mths.get("init")
+                    if init_idx is None and method_overloads.get("init"):
+                        init_args = stack[sp - nargs : sp]
+                        init_idx = select_overload(method_overloads["init"], init_args)
+                    if init_idx is not None:
+                        init_fn = functions[init_idx]
                         base = sp - nargs
                         n = init_fn.locals_count
                         if n < 1:
                             n = 1
-                        new_slots = [None] * n
+                        new_slots: list[Any] = [None] * n
                         new_slots[0] = obj
                         j = base
                         for i in range(nargs):
@@ -1182,12 +1553,14 @@ class VM:
                         fc = fn.constants
                         fc_len = len(fc)
                         continue
+                    sp -= nargs
                     stack[sp] = obj
                     sp += 1
                 case OC.MAKE_LAMBDA:
                     func_idx = code[ip]
                     ip += 1
-                    stack[sp] = _SumaLambda(func_idx, list(slots))
+                    capture_count = functions[func_idx].capture_count
+                    stack[sp] = _SumaLambda(func_idx, list(slots[:capture_count]))
                     sp += 1
 
                 # Pattern matching
@@ -1247,6 +1620,8 @@ class VM:
     # stack helpers
 
     def _push(self, val: Any) -> None:
+        if self._sp >= len(self.stack):
+            self.stack.extend([None] * max(len(self.stack), 1))
         self.stack[self._sp] = val
         self._sp += 1
 
@@ -1273,12 +1648,16 @@ class VM:
             return "true" if val else "false"
         if isinstance(val, SumaList):
             return val.__repr__()
+        if isinstance(val, SumaRange):
+            return val.__repr__()
         if isinstance(val, SumaOk):
             return val.__repr__()
         if isinstance(val, SumaErr):
             return val.__repr__()
         if isinstance(val, SumaObject):
             return f"{val.class_name} instance"
+        if isinstance(val, SumaOverload):
+            return repr(val)
         if isinstance(val, SumaCallable):
             return repr(val)
         if isinstance(val, SumaPyObject):
@@ -1292,6 +1671,10 @@ class VM:
                     idx += len(obj.items)
                 return obj.items[idx]
             raise VMError(f"List index must be Int, got {type(idx)}")
+        if isinstance(obj, SumaRange):
+            if isinstance(idx, int):
+                return obj[idx]
+            raise VMError(f"Range index must be Int, got {type(idx)}")
         if isinstance(obj, str):
             if isinstance(idx, int):
                 return obj[idx]
@@ -1355,19 +1738,23 @@ class VM:
 
     def _member(self, obj: Any, name: str) -> Any:
         if isinstance(obj, SumaObject):
+            class_info = self.program.classes.get(obj.class_name, {})
+            getters = class_info.get("getters", {})
+            getter_idx = getters.get(name)
+            if getter_idx is not None:
+                return self._call_lambda(SumaLambda(getter_idx, [obj]), [])
+            methods = class_info.get("methods", {})
             if name in obj.fields:
                 return obj.fields[name]
             # Look for method
-            class_info = self.program.classes.get(obj.class_name, {})
-            methods = class_info.get("methods", {})
+            method_overloads = class_info.get("method_overloads", {})
+            if name in method_overloads:
+                return SumaOverload(name, method_overloads[name], obj)
             if name in methods:
                 func_idx = methods[name]
-                return SumaLambda(func_idx, [obj])  # bind 'this'
-            # Getter
-            getter = f"get_{name}"
-            if getter in methods:
-                func_idx = methods[getter]
-                return SumaLambda(func_idx, [obj])
+                return self._decorate_bound_method(
+                    obj.class_name, name, SumaLambda(func_idx, [obj])
+                )
             raise VMError(f"No member '{name}' on {obj.class_name}")
         if isinstance(obj, SumaList):
             if name == "size":
@@ -1375,6 +1762,16 @@ class VM:
             if name == "add":
                 return SumaLambda(-1, [obj])  # special built-in
             raise VMError(f"No member '{name}' on List")
+        if isinstance(obj, SumaRange):
+            if name == "size":
+                return len(obj)
+            if name == "start":
+                return obj.start
+            if name == "end":
+                return obj.end
+            if name == "inclusive":
+                return obj.inclusive
+            raise VMError(f"No member '{name}' on Range")
         if isinstance(obj, str):
             if name == "size":
                 return len(obj)
@@ -1391,6 +1788,11 @@ class VM:
 
     def _set_member(self, obj: Any, name: str, val: Any) -> None:
         if isinstance(obj, SumaObject):
+            class_info = self.program.classes.get(obj.class_name, {})
+            method_idx = class_info.get("setters", {}).get(name)
+            if method_idx is not None:
+                self._call_lambda(SumaLambda(method_idx, [obj]), [val])
+                return
             obj.fields[name] = val
             return
         raise VMError(f"Cannot set member on {type(obj)}")
@@ -1475,6 +1877,8 @@ class VM:
         val = args[0]
         if isinstance(val, SumaList):
             return len(val.items)
+        if isinstance(val, SumaRange):
+            return len(val)
         if isinstance(val, str):
             return len(val)
         raise VMError(f"len() not supported for {type(val)}")
@@ -1493,6 +1897,8 @@ class VM:
             return "Str"
         if isinstance(val, SumaList):
             return "List"
+        if isinstance(val, SumaRange):
+            return "Range"
         if isinstance(val, SumaOk):
             return "R"
         if isinstance(val, SumaErr):

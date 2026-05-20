@@ -5,7 +5,7 @@ Converts the parsed AST into the IR representation.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from src.frontend.parser.ast_nodes import *
 
@@ -53,6 +53,37 @@ class IRBuilder:
         return self._current
 
 
+def _getter_function(member: GetterDecl) -> FunctionDecl:
+    return FunctionDecl(
+        name=f"get_{member.name}",
+        params=[],
+        return_type=member.return_type,
+        body=member.body,
+        is_pub=member.is_pub,
+        is_static=False,
+        info=member.info,
+    )
+
+
+def _setter_function(member: SetterDecl) -> FunctionDecl:
+    return FunctionDecl(
+        name=f"set_{member.name}",
+        params=[
+            Param(
+                name=member.param_name,
+                type_annotation=member.param_type,
+                default=None,
+                is_optional=False,
+            )
+        ],
+        return_type=None,
+        body=member.body,
+        is_pub=member.is_pub,
+        is_static=False,
+        info=member.info,
+    )
+
+
 class FuncLowering:
     """Lowers a single function from AST to IR."""
 
@@ -62,7 +93,8 @@ class FuncLowering:
         is_method: bool = False,
         class_name: Optional[str] = None,
         nested_functions: Optional[list[IRFunction]] = None,
-        next_func_idx: Optional[callable] = None,
+        next_func_idx: Optional[Callable[[str], int]] = None,
+        captured_locals: Optional[Sequence[str]] = None,
     ) -> None:
         self.func_name = func_name
         self.is_method = is_method
@@ -74,14 +106,18 @@ class FuncLowering:
         self._continue_labels: list[Label] = []
         self._string_pool: dict[str, int] = {}
         self._constants: list[object] = []
+        self._const_pool: dict[tuple[type, object], int] = {}
         self._class_info: dict = {}
         self._func_name_to_idx: dict = {}
         self._func_decls: dict[str, FunctionDecl] = {}
         self._class_init_decls: dict[str, FunctionDecl] = {}
         self._decorated_names: set[str] = set()
+        self._decorated_classes: set[str] = set()
+        self._overloaded_names: set[str] = set()
         self._global_names: set[str] = set()
         self._nested_functions = nested_functions if nested_functions is not None else []
         self._next_func_idx = next_func_idx
+        self._captured_locals = tuple(captured_locals or ())
         self._lambda_counter = 0
         self._throw_handlers: list[tuple[Optional[int], Label]] = []
 
@@ -97,11 +133,13 @@ class FuncLowering:
         return self.locals.get(name)
 
     def _const(self, value: object) -> int:
-        for i, c in enumerate(self._constants):
-            if type(c) is type(value) and c == value:
-                return i
+        key = (type(value), value)
+        existing = self._const_pool.get(key)
+        if existing is not None:
+            return existing
         idx = len(self._constants)
         self._constants.append(value)
+        self._const_pool[key] = idx
         return idx
 
     def _string_const(self, value: str) -> int:
@@ -118,6 +156,8 @@ class FuncLowering:
         self.builder.set_current(entry_block)
 
         params = []
+        for name in self._captured_locals:
+            self.add_local(name)
         if self.is_method:
             self.add_local("this")
             params.append("this")
@@ -147,6 +187,9 @@ class FuncLowering:
             entry=entry_block,
             blocks=self.builder.blocks,
             locals_count=self.local_count,
+            capture_count=len(self._captured_locals),
+            param_types=[param.type_annotation for param in func.params],
+            type_params=list(func.type_params),
         )
         return ir_func
 
@@ -176,6 +219,10 @@ class FuncLowering:
             self._lower_if(stmt)
         elif isinstance(stmt, LoopStmt):
             self._lower_loop(stmt)
+        elif isinstance(stmt, WhileStmt):
+            self._lower_while(stmt)
+        elif isinstance(stmt, ForInStmt):
+            self._lower_for_in(stmt)
         elif isinstance(stmt, BreakStmt):
             if not self._break_labels:
                 raise LowerError("'break' outside of loop")
@@ -206,14 +253,36 @@ class FuncLowering:
                 self.builder.emit(Return(value=err_reg))
         elif isinstance(stmt, TryCatchStmt):
             self._lower_try_catch(stmt)
+        elif isinstance(stmt, DestructureAssignStmt):
+            self._lower_destructure_assignment(stmt)
 
     def _lower_global_var(self, stmt: VarDecl) -> None:
-        if stmt.initializer:
-            val = self._lower_expr(stmt.initializer)
-        else:
-            val = self.builder.new_reg("null")
-            self.builder.emit(LoadConst(dest=val, value=None))
+        if not stmt.initializer:
+            return
+        val = self._lower_expr(stmt.initializer)
         self.builder.emit(StoreGlobal(src=val, name=stmt.name))
+
+    def _lower_destructure_assignment(self, stmt: DestructureAssignStmt) -> None:
+        value_slot = self.add_local(f"__destructure_value_{len(self.locals)}")
+        value = self._lower_expr(stmt.value)
+        self.builder.emit(StoreVar(src=value, slot=value_slot, name="__destructure_value"))
+        for index, target in enumerate(stmt.targets):
+            loaded = self.builder.new_reg("destructure")
+            self.builder.emit(LoadVar(dest=loaded, slot=value_slot, name="__destructure_value"))
+            idx = self.builder.new_reg("destructure_index")
+            self.builder.emit(LoadConst(dest=idx, value=index))
+            item = self.builder.new_reg(target)
+            self.builder.emit(LoadIndex(dest=item, obj=loaded, index=idx))
+            self._store_identifier(target, item)
+
+    def _store_identifier(self, name: str, value: Operand) -> None:
+        slot = self.get_local(name)
+        if slot is None and name in self._global_names:
+            self.builder.emit(StoreGlobal(src=value, name=name))
+            return
+        if slot is None:
+            slot = self.add_local(name)
+        self.builder.emit(StoreVar(src=value, slot=slot, name=name))
 
     def _lower_if(self, stmt: IfStmt) -> None:
         end_label = self.builder.new_label("if.end")
@@ -283,7 +352,100 @@ class FuncLowering:
         self._break_labels.pop()
         self._continue_labels.pop()
 
+    def _lower_while(self, stmt: WhileStmt) -> None:
+        cond_label = self.builder.new_label("while.cond")
+        body_label = self.builder.new_label("while.body")
+        end_label = self.builder.new_label("while.end")
+
+        self._break_labels.append(end_label)
+        self._continue_labels.append(cond_label)
+        self.builder.emit(Jump(target=cond_label))
+
+        cond_block = self.builder.add_block(cond_label)
+        self.builder.set_current(cond_block)
+        cond = self._lower_expr(stmt.condition)
+        self.builder.emit(BranchFalse(cond=cond, target=end_label))
+        self.builder.emit(Jump(target=body_label))
+
+        body_block = self.builder.add_block(body_label)
+        self.builder.set_current(body_block)
+        for s in stmt.body.statements:
+            self._lower_stmt(s)
+        self.builder.emit(Jump(target=cond_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+
+        self._break_labels.pop()
+        self._continue_labels.pop()
+
+    def _lower_for_in(self, stmt: ForInStmt) -> None:
+        iter_slot = self.add_local(f"__for_iter_{len(self.locals)}")
+        index_slot = self.add_local(f"__for_index_{len(self.locals)}")
+        item_slot = self.add_local(stmt.var_name)
+        iterable = self._lower_expr(stmt.iterable)
+        self.builder.emit(StoreVar(src=iterable, slot=iter_slot, name="__for_iter"))
+        zero = self.builder.new_reg("zero")
+        self.builder.emit(LoadConst(dest=zero, value=0))
+        self.builder.emit(StoreVar(src=zero, slot=index_slot, name="__for_index"))
+
+        cond_label = self.builder.new_label("for.cond")
+        body_label = self.builder.new_label("for.body")
+        inc_label = self.builder.new_label("for.inc")
+        end_label = self.builder.new_label("for.end")
+
+        self._break_labels.append(end_label)
+        self._continue_labels.append(inc_label)
+        self.builder.emit(Jump(target=cond_label))
+
+        cond_block = self.builder.add_block(cond_label)
+        self.builder.set_current(cond_block)
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        iter_value = self.builder.new_reg("for_iter")
+        self.builder.emit(LoadVar(dest=iter_value, slot=iter_slot, name="__for_iter"))
+        size = self.builder.new_reg("for_size")
+        self.builder.emit(LoadMember(dest=size, obj=iter_value, member="size"))
+        keep_going = self.builder.new_reg("for_keep")
+        self.builder.emit(Lt(dest=keep_going, left=index, right=size))
+        self.builder.emit(BranchFalse(cond=keep_going, target=end_label))
+        self.builder.emit(Jump(target=body_label))
+
+        body_block = self.builder.add_block(body_label)
+        self.builder.set_current(body_block)
+        iter_value = self.builder.new_reg("for_iter")
+        self.builder.emit(LoadVar(dest=iter_value, slot=iter_slot, name="__for_iter"))
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        item = self.builder.new_reg("for_item")
+        self.builder.emit(LoadIndex(dest=item, obj=iter_value, index=index))
+        self.builder.emit(StoreVar(src=item, slot=item_slot, name=stmt.var_name))
+        for s in stmt.body.statements:
+            self._lower_stmt(s)
+        self.builder.emit(Jump(target=inc_label))
+
+        inc_block = self.builder.add_block(inc_label)
+        self.builder.set_current(inc_block)
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        one = self.builder.new_reg("one")
+        self.builder.emit(LoadConst(dest=one, value=1))
+        next_index = self.builder.new_reg("for_next")
+        self.builder.emit(Add(dest=next_index, left=index, right=one))
+        self.builder.emit(StoreVar(src=next_index, slot=index_slot, name="__for_index"))
+        self.builder.emit(Jump(target=cond_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+
+        self._break_labels.pop()
+        self._continue_labels.pop()
+
     def _lower_try_catch(self, stmt: TryCatchStmt) -> None:
+        if stmt.finally_body:
+            self._lower_try_catch_with_finally(stmt)
+            return
+
         end_label = self.builder.new_label("try.end")
         catch_label = self.builder.new_label("catch")
         catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
@@ -304,9 +466,54 @@ class FuncLowering:
             self.builder.emit(Jump(target=end_label))
             end_block = self.builder.add_block(end_label)
             self.builder.set_current(end_block)
-        if stmt.finally_body:
-            for s in stmt.finally_body.statements:
+
+    def _lower_try_catch_with_finally(self, stmt: TryCatchStmt) -> None:
+        finally_body = stmt.finally_body
+        if finally_body is None:
+            return
+        end_label = self.builder.new_label("try.end")
+        catch_label = self.builder.new_label("catch")
+        throw_label = self.builder.new_label("finally.throw")
+        normal_finally_label = self.builder.new_label("finally.normal")
+        pending_throw_slot = self.add_local(f"__finally_throw_{len(self.locals)}")
+        catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
+        handler_slot = catch_slot if stmt.catch_body else pending_throw_slot
+        handler_label = catch_label if stmt.catch_body else throw_label
+
+        self._throw_handlers.append((handler_slot, handler_label))
+        for s in stmt.try_body.statements:
+            self._lower_stmt(s)
+        self._throw_handlers.pop()
+        self.builder.emit(Jump(target=normal_finally_label))
+
+        catch_body = stmt.catch_body
+        if catch_body is not None:
+            catch_block = self.builder.add_block(catch_label)
+            self.builder.set_current(catch_block)
+            self._throw_handlers.append((pending_throw_slot, throw_label))
+            for s in catch_body.statements:
                 self._lower_stmt(s)
+            self._throw_handlers.pop()
+            self.builder.emit(Jump(target=normal_finally_label))
+
+        throw_block = self.builder.add_block(throw_label)
+        self.builder.set_current(throw_block)
+        for s in finally_body.statements:
+            self._lower_stmt(s)
+        thrown = self.builder.new_reg("finally_throw")
+        self.builder.emit(LoadVar(dest=thrown, slot=pending_throw_slot, name="__finally_throw"))
+        err = self.builder.new_reg("finally_err")
+        self.builder.emit(MakeErr(dest=err, value=thrown))
+        self.builder.emit(Return(value=err))
+
+        normal_block = self.builder.add_block(normal_finally_label)
+        self.builder.set_current(normal_block)
+        for s in finally_body.statements:
+            self._lower_stmt(s)
+        self.builder.emit(Jump(target=end_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
 
     def _lower_expr(self, expr: Expr) -> Operand:
         """Lower an expression, returning the operand holding the result."""
@@ -342,7 +549,11 @@ class FuncLowering:
                 return dest
         elif isinstance(expr, ThisExpr):
             dest = self.builder.new_reg("this")
-            self.builder.emit(LoadThis(dest=dest))
+            slot = self.get_local("this")
+            if slot is not None and not self.is_method:
+                self.builder.emit(LoadVar(dest=dest, slot=slot, name="this"))
+            else:
+                self.builder.emit(LoadThis(dest=dest))
             return dest
         elif isinstance(expr, ItExpr):
             dest = self.builder.new_reg("it")
@@ -364,6 +575,15 @@ class FuncLowering:
             return self._lower_assign(expr)
         elif isinstance(expr, CompoundAssignExpr):
             return self._lower_compound_assign(expr)
+        elif isinstance(expr, IncrementExpr):
+            return self._lower_compound_assign(
+                CompoundAssignExpr(
+                    op="+=" if expr.delta > 0 else "-=",
+                    target=expr.target,
+                    value=IntLiteral(value=abs(expr.delta), info=expr.info),
+                    info=expr.info,
+                )
+            )
         elif isinstance(expr, CallExpr):
             return self._lower_call(expr)
         elif isinstance(expr, MemberExpr):
@@ -403,8 +623,22 @@ class FuncLowering:
             return self._lower_lambda(expr)
         elif isinstance(expr, ElvExpr):
             return self._lower_elv(expr)
+        elif isinstance(expr, NullCoalesceExpr):
+            return self._lower_null_coalesce(expr)
+        elif isinstance(expr, PropagateExpr):
+            return self._lower_propagate(expr)
         elif isinstance(expr, SafeCallExpr):
-            return self._lower_safe_call(expr)
+            return self._lower_safe_access(expr.obj, expr.member, expr.args)
+        elif isinstance(expr, SafeMemberExpr):
+            return self._lower_safe_access(expr.obj, expr.member, None)
+        elif isinstance(expr, IfExpr):
+            return self._lower_if_expr(expr)
+        elif isinstance(expr, RangeExpr):
+            start = self._lower_expr(expr.start)
+            end = self._lower_expr(expr.end)
+            dest = self.builder.new_reg("range")
+            self.builder.emit(MakeRange(dest=dest, start=start, end=end, inclusive=expr.inclusive))
+            return dest
         elif isinstance(expr, PatternMatchExpr):
             return self._lower_pattern_match(expr)
         else:
@@ -436,14 +670,22 @@ class FuncLowering:
             is_static=False,
             info=expr.info,
         )
+        param_names = {name for name, _ in expr.params}
+        captured_locals = [
+            f"__capture_shadow_{slot}_{name}" if name in param_names else name
+            for name, slot in sorted(self.locals.items(), key=lambda item: item[1])
+        ]
         lowering = FuncLowering(
             lambda_name,
             nested_functions=self._nested_functions,
             next_func_idx=self._next_func_idx,
+            captured_locals=captured_locals,
         )
         lowering._class_info = self._class_info
         lowering._func_name_to_idx = self._func_name_to_idx
         lowering._decorated_names = self._decorated_names
+        lowering._decorated_classes = self._decorated_classes
+        lowering._overloaded_names = self._overloaded_names
         lowering._global_names = self._global_names
         ir_func = lowering.lower(func_decl)
         setattr(ir_func, "reserved_func_idx", func_idx)
@@ -454,6 +696,9 @@ class FuncLowering:
         return dest
 
     def _lower_binary(self, expr: BinaryExpr) -> Operand:
+        if expr.op in ("&&", "||"):
+            return self._lower_logical(expr)
+
         left = self._lower_expr(expr.left)
         dest = self.builder.new_reg("bin")
 
@@ -490,6 +735,37 @@ class FuncLowering:
         cls = op_map.get(expr.op)
         if cls:
             self.builder.emit(cls(dest=dest, left=left, right=right))
+        return dest
+
+    def _lower_logical(self, expr: BinaryExpr) -> Operand:
+        left = self._lower_expr(expr.left)
+        result_slot = self.add_local(f"__logical_result_{len(self.locals)}")
+        right_label = self.builder.new_label("logical.right")
+        shortcut_label = self.builder.new_label("logical.shortcut")
+        end_label = self.builder.new_label("logical.end")
+
+        if expr.op == "&&":
+            self.builder.emit(BranchFalse(cond=left, target=shortcut_label))
+        else:
+            self.builder.emit(Branch(cond=left, target=shortcut_label))
+
+        right_block = self.builder.add_block(right_label)
+        self.builder.set_current(right_block)
+        right = self._lower_expr(expr.right)
+        self.builder.emit(StoreVar(src=right, slot=result_slot, name="__logical_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        shortcut_block = self.builder.add_block(shortcut_label)
+        self.builder.set_current(shortcut_block)
+        shortcut = self.builder.new_reg("logical")
+        self.builder.emit(LoadConst(dest=shortcut, value=expr.op == "||"))
+        self.builder.emit(StoreVar(src=shortcut, slot=result_slot, name="__logical_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+        dest = self.builder.new_reg("logical")
+        self.builder.emit(LoadVar(dest=dest, slot=result_slot, name="__logical_result"))
         return dest
 
     def _lower_assign(self, expr: AssignExpr) -> Operand:
@@ -543,6 +819,18 @@ class FuncLowering:
                 self.builder.emit(op_cls(dest=dest, left=member, right=right))
             self.builder.emit(StoreMember(obj=obj, member=expr.target.member, value=dest))
             return dest
+        elif isinstance(expr.target, IndexExpr):
+            obj = self._lower_expr(expr.target.obj)
+            index = self._lower_expr(expr.target.index)
+            current = self.builder.new_reg("index")
+            self.builder.emit(LoadIndex(dest=current, obj=obj, index=index))
+            right = self._lower_expr(expr.value)
+            dest = self.builder.new_reg("compound")
+            op_cls = op_map.get(expr.op.rstrip("="))
+            if op_cls:
+                self.builder.emit(op_cls(dest=dest, left=current, right=right))
+            self.builder.emit(StoreIndex(obj=obj, index=index, value=dest))
+            return dest
         return self._lower_expr(expr.value)
 
     def _lower_call(self, expr: CallExpr) -> Operand:
@@ -550,7 +838,12 @@ class FuncLowering:
             init = self._class_init_decls.get(expr.callee.name)
             args = self._lower_args(expr.args, init.params if init else None)
             dest = self.builder.new_reg("obj")
-            self.builder.emit(MakeObject(dest=dest, class_name=expr.callee.name, args=args))
+            if expr.callee.name in self._decorated_classes:
+                callee = self.builder.new_reg(expr.callee.name)
+                self.builder.emit(LoadGlobal(dest=callee, name=expr.callee.name))
+                self.builder.emit(Call(dest=dest, callee=callee, args=args))
+            else:
+                self.builder.emit(MakeObject(dest=dest, class_name=expr.callee.name, args=args))
             return dest
 
         # Method calls stay dynamic so receiver binding remains correct.
@@ -565,7 +858,11 @@ class FuncLowering:
             slot = self.get_local(expr.callee.name)
             if slot is None:
                 func_idx = self._func_name_to_idx.get(expr.callee.name)
-                if func_idx is not None and expr.callee.name not in self._decorated_names:
+                if (
+                    func_idx is not None
+                    and expr.callee.name not in self._decorated_names
+                    and expr.callee.name not in self._overloaded_names
+                ):
                     func_decl = self._func_decls.get(expr.callee.name)
                     args = self._lower_args(expr.args, func_decl.params if func_decl else None)
                     dest = self.builder.new_reg("call")
@@ -607,7 +904,9 @@ class FuncLowering:
 
         ok_block = self.builder.add_block(ok_label)
         self.builder.set_current(ok_block)
-        self.builder.emit(StoreVar(src=left, slot=result_slot, name="__elv_result"))
+        ok_value = self.builder.new_reg("elv.ok_value")
+        self.builder.emit(UnwrapOk(dest=ok_value, src=left))
+        self.builder.emit(StoreVar(src=ok_value, slot=result_slot, name="__elv_result"))
         self.builder.emit(Jump(target=end_label))
 
         end_block = self.builder.add_block(end_label)
@@ -616,29 +915,98 @@ class FuncLowering:
         self.builder.emit(LoadVar(dest=dest, slot=result_slot, name="__elv_result"))
         return dest
 
-    def _lower_safe_call(self, expr: SafeCallExpr) -> Operand:
-        obj = self._lower_expr(expr.obj)
-        call_label = self.builder.new_label("safe.call")
+    def _lower_null_coalesce(self, expr: NullCoalesceExpr) -> Operand:
+        left = self._lower_expr(expr.left)
+        right_label = self.builder.new_label("nullish.right")
+        left_label = self.builder.new_label("nullish.left")
+        end_label = self.builder.new_label("nullish.end")
+        result_slot = self.add_local(f"__nullish_result_{len(self.locals)}")
+
+        is_null = self.builder.new_reg("is_null")
+        self.builder.emit(Eq(dest=is_null, left=left, right=Immediate(None)))
+        self.builder.emit(BranchFalse(cond=is_null, target=left_label))
+
+        right_block = self.builder.add_block(right_label)
+        self.builder.set_current(right_block)
+        right = self._lower_expr(expr.right)
+        self.builder.emit(StoreVar(src=right, slot=result_slot, name="__nullish_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        left_block = self.builder.add_block(left_label)
+        self.builder.set_current(left_block)
+        self.builder.emit(StoreVar(src=left, slot=result_slot, name="__nullish_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+        dest = self.builder.new_reg("nullish")
+        self.builder.emit(LoadVar(dest=dest, slot=result_slot, name="__nullish_result"))
+        return dest
+
+    def _lower_propagate(self, expr: PropagateExpr) -> Operand:
+        value = self._lower_expr(expr.value)
+        ok_label = self.builder.new_label("propagate.ok")
+        is_err = self.builder.new_reg("is_err")
+        self.builder.emit(IsErr(dest=is_err, src=value))
+        self.builder.emit(BranchFalse(cond=is_err, target=ok_label))
+        self.builder.emit(Return(value=value))
+
+        ok_block = self.builder.add_block(ok_label)
+        self.builder.set_current(ok_block)
+        dest = self.builder.new_reg("propagate")
+        self.builder.emit(UnwrapOk(dest=dest, src=value))
+        return dest
+
+    def _lower_safe_access(
+        self, obj_expr: Expr, member_name: str, args: Sequence[Expr] | None
+    ) -> Operand:
+        obj = self._lower_expr(obj_expr)
+        null_label = self.builder.new_label("safe.null")
+        raw_label = self.builder.new_label("safe.raw")
+        access_label = self.builder.new_label("safe.access")
         end_label = self.builder.new_label("safe.end")
         result_slot = self.add_local(f"__safe_result_{len(self.locals)}")
+        receiver_slot = self.add_local(f"__safe_receiver_{len(self.locals)}")
 
         is_err = self.builder.new_reg("is_err")
         self.builder.emit(IsErr(dest=is_err, src=obj))
-        self.builder.emit(BranchFalse(cond=is_err, target=call_label))
+        self.builder.emit(Branch(cond=is_err, target=null_label))
+        is_null = self.builder.new_reg("is_null")
+        self.builder.emit(Eq(dest=is_null, left=obj, right=Immediate(None)))
+        self.builder.emit(Branch(cond=is_null, target=null_label))
+        is_ok = self.builder.new_reg("is_ok")
+        self.builder.emit(IsOk(dest=is_ok, src=obj))
+        self.builder.emit(BranchFalse(cond=is_ok, target=raw_label))
+        receiver = self.builder.new_reg("safe.receiver")
+        self.builder.emit(UnwrapOk(dest=receiver, src=obj))
+        self.builder.emit(StoreVar(src=receiver, slot=receiver_slot, name="__safe_receiver"))
+        self.builder.emit(Jump(target=access_label))
 
+        null_block = self.builder.add_block(null_label)
+        self.builder.set_current(null_block)
         null_reg = self.builder.new_reg("null")
         self.builder.emit(LoadConst(dest=null_reg, value=None))
         self.builder.emit(StoreVar(src=null_reg, slot=result_slot, name="__safe_result"))
         self.builder.emit(Jump(target=end_label))
 
-        call_block = self.builder.add_block(call_label)
-        self.builder.set_current(call_block)
+        raw_block = self.builder.add_block(raw_label)
+        self.builder.set_current(raw_block)
+        self.builder.emit(StoreVar(src=obj, slot=receiver_slot, name="__safe_receiver"))
+        self.builder.emit(Jump(target=access_label))
+
+        access_block = self.builder.add_block(access_label)
+        self.builder.set_current(access_block)
+        receiver_value = self.builder.new_reg("safe.receiver")
+        self.builder.emit(LoadVar(dest=receiver_value, slot=receiver_slot, name="__safe_receiver"))
         member = self.builder.new_reg("member")
-        self.builder.emit(LoadMember(dest=member, obj=obj, member=expr.member))
-        args = [self._lower_expr(arg) for arg in expr.args]
-        call = self.builder.new_reg("safe")
-        self.builder.emit(Call(dest=call, callee=member, args=args))
-        self.builder.emit(StoreVar(src=call, slot=result_slot, name="__safe_result"))
+        self.builder.emit(LoadMember(dest=member, obj=receiver_value, member=member_name))
+        if args is None:
+            self.builder.emit(StoreVar(src=member, slot=result_slot, name="__safe_result"))
+        else:
+            lowered_args = [self._lower_expr(arg) for arg in args]
+            call = self.builder.new_reg("safe")
+            self.builder.emit(Call(dest=call, callee=member, args=lowered_args))
+            self.builder.emit(StoreVar(src=call, slot=result_slot, name="__safe_result"))
         self.builder.emit(Jump(target=end_label))
 
         end_block = self.builder.add_block(end_label)
@@ -648,9 +1016,13 @@ class FuncLowering:
         return dest
 
     def _lower_pattern_match(self, expr: PatternMatchExpr) -> Operand:
-        scrutinee = self._lower_expr(expr.scrutinee)
         end_label = self.builder.new_label("match.end")
         result_slot = self.add_local(f"__match_result_{len(self.locals)}")
+        saved_it_slot = self.add_local(f"__match_saved_it_{len(self.locals)}")
+        saved_it = self.builder.new_reg("saved_it")
+        self.builder.emit(LoadIt(dest=saved_it))
+        self.builder.emit(StoreVar(src=saved_it, slot=saved_it_slot, name="__match_saved_it"))
+        scrutinee = self._lower_expr(expr.scrutinee)
 
         for arm in expr.arms:
             next_label = self.builder.new_label("match.next")
@@ -685,14 +1057,16 @@ class FuncLowering:
             elif pattern.kind in ("type", "literal", "wildcard"):
                 self.builder.emit(SetIt(src=scrutinee))
             if isinstance(arm.body, BlockStmt):
-                for s in arm.body.statements:
-                    self._lower_stmt(s)
-                null_reg = self.builder.new_reg("null")
-                self.builder.emit(LoadConst(dest=null_reg, value=None))
-                self.builder.emit(StoreVar(src=null_reg, slot=result_slot, name="__match_result"))
+                value = self._lower_block_value(arm.body)
+                self.builder.emit(StoreVar(src=value, slot=result_slot, name="__match_result"))
             else:
                 value = self._lower_expr(arm.body)
                 self.builder.emit(StoreVar(src=value, slot=result_slot, name="__match_result"))
+            restored_it = self.builder.new_reg("restore_it")
+            self.builder.emit(
+                LoadVar(dest=restored_it, slot=saved_it_slot, name="__match_saved_it")
+            )
+            self.builder.emit(SetIt(src=restored_it))
             self.builder.emit(Jump(target=end_label))
 
             next_block = self.builder.add_block(next_label)
@@ -701,6 +1075,9 @@ class FuncLowering:
         null_reg = self.builder.new_reg("null")
         self.builder.emit(LoadConst(dest=null_reg, value=None))
         self.builder.emit(StoreVar(src=null_reg, slot=result_slot, name="__match_result"))
+        restored_it = self.builder.new_reg("restore_it")
+        self.builder.emit(LoadVar(dest=restored_it, slot=saved_it_slot, name="__match_saved_it"))
+        self.builder.emit(SetIt(src=restored_it))
         self.builder.emit(Jump(target=end_label))
         end_block = self.builder.add_block(end_label)
         self.builder.set_current(end_block)
@@ -708,6 +1085,66 @@ class FuncLowering:
         dest = self.builder.new_reg("match")
         self.builder.emit(LoadVar(dest=dest, slot=result_slot, name="__match_result"))
         return dest
+
+    def _lower_if_expr(self, expr: IfExpr) -> Operand:
+        result_slot = self.add_local(f"__if_result_{len(self.locals)}")
+        end_label = self.builder.new_label("ifexpr.end")
+        next_label = self.builder.new_label("ifexpr.next")
+
+        cond = self._lower_expr(expr.condition)
+        self.builder.emit(BranchFalse(cond=cond, target=next_label))
+
+        then_block = self.builder.add_block(self.builder.new_label("ifexpr.then"))
+        self.builder.set_current(then_block)
+        value = self._lower_block_value(expr.then_branch)
+        self.builder.emit(StoreVar(src=value, slot=result_slot, name="__if_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        for index, (elif_cond, elif_body) in enumerate(expr.elif_branches):
+            cond_block = self.builder.add_block(next_label)
+            self.builder.set_current(cond_block)
+            following_label = (
+                self.builder.new_label("ifexpr.next")
+                if index + 1 < len(expr.elif_branches)
+                else self.builder.new_label("ifexpr.else")
+            )
+            cond = self._lower_expr(elif_cond)
+            self.builder.emit(BranchFalse(cond=cond, target=following_label))
+
+            body_block = self.builder.add_block(self.builder.new_label("ifexpr.elif"))
+            self.builder.set_current(body_block)
+            value = self._lower_block_value(elif_body)
+            self.builder.emit(StoreVar(src=value, slot=result_slot, name="__if_result"))
+            self.builder.emit(Jump(target=end_label))
+            next_label = following_label
+
+        else_block = self.builder.add_block(next_label)
+        self.builder.set_current(else_block)
+        if expr.else_branch:
+            value = self._lower_block_value(expr.else_branch)
+        else:
+            value = self.builder.new_reg("null")
+            self.builder.emit(LoadConst(dest=value, value=None))
+        self.builder.emit(StoreVar(src=value, slot=result_slot, name="__if_result"))
+        self.builder.emit(Jump(target=end_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+        dest = self.builder.new_reg("if_result")
+        self.builder.emit(LoadVar(dest=dest, slot=result_slot, name="__if_result"))
+        return dest
+
+    def _lower_block_value(self, block: BlockStmt) -> Operand:
+        statements = list(block.statements)
+        if statements and isinstance(statements[-1], ExprStmt):
+            for stmt in statements[:-1]:
+                self._lower_stmt(stmt)
+            return self._lower_expr(statements[-1].expr)
+        for stmt in statements:
+            self._lower_stmt(stmt)
+        null_reg = self.builder.new_reg("null")
+        self.builder.emit(LoadConst(dest=null_reg, value=None))
+        return null_reg
 
     def _lower_match_literal(self, pattern: Expr | str | None) -> Operand:
         if isinstance(pattern, Identifier):
@@ -725,48 +1162,98 @@ def lower_to_ir(ast: Program) -> IRProgram:
     program.decorated_functions = [
         decl for decl in ast.declarations if isinstance(decl, FunctionDecl) and decl.decorators
     ]
+    program.decorated_classes = [
+        decl for decl in ast.declarations if isinstance(decl, ClassDecl) and decl.decorators
+    ]
+    program.decorated_methods = [
+        (f"{decl.name}.{member.name}", member)
+        for decl in ast.declarations
+        if isinstance(decl, ClassDecl)
+        for member in decl.members
+        if isinstance(member, FunctionDecl) and member.decorators
+    ]
     decorated_names = {decl.name for decl in program.decorated_functions}
+    decorated_classes = {decl.name for decl in program.decorated_classes}
     class_info = {}
-    func_decls = {decl.name: decl for decl in ast.declarations if isinstance(decl, FunctionDecl)}
+    func_overloads: dict[str, list[FunctionDecl]] = {}
+    for decl in ast.declarations:
+        if isinstance(decl, FunctionDecl):
+            func_overloads.setdefault(decl.name, []).append(decl)
+    overloaded_names = {name for name, funcs in func_overloads.items() if len(funcs) > 1}
+    func_decls = {name: funcs[0] for name, funcs in func_overloads.items() if len(funcs) == 1}
     global_vars = [decl for decl in ast.declarations if isinstance(decl, VarDecl)]
     global_names = {decl.name for decl in global_vars}
     class_init_decls = {}
     func_name_to_idx = {}
 
     # Pre-register functions in final emission order for direct calls.
-    emission_order: list[str] = []
+    emission_order: list[tuple[str, Optional[str]]] = []
 
     for decl in ast.declarations:
         if isinstance(decl, ClassDecl):
             fields = []
-            methods = {}
+            method_groups: dict[str, list[FunctionDecl]] = {}
+            getters: dict[str, int] = {}
+            setters: dict[str, int] = {}
             for member in decl.members:
                 if isinstance(member, VarDecl):
                     fields.append(member.name)
                 elif isinstance(member, FunctionDecl):
-                    methods[member.name] = -1
+                    method_groups.setdefault(member.name, []).append(member)
+                    if member.name == "init" and decl.name not in class_init_decls:
+                        class_init_decls[decl.name] = member
                 elif isinstance(member, GetterDecl):
-                    methods[f"get_{member.name}"] = -1
+                    getters[member.name] = -1
                 elif isinstance(member, SetterDecl):
-                    methods[f"set_{member.name}"] = -1
-                if isinstance(member, FunctionDecl) and member.name == "init":
-                    class_init_decls[decl.name] = member
-            class_info[decl.name] = {"fields": fields, "methods": methods}
+                    setters[member.name] = -1
+            methods = {name: -1 for name, members in method_groups.items() if len(members) == 1}
+            method_overloads = {
+                name: [] for name, members in method_groups.items() if len(members) > 1
+            }
+            class_info[decl.name] = {
+                "fields": fields,
+                "methods": methods,
+                "method_overloads": method_overloads,
+                "getters": getters,
+                "setters": setters,
+            }
 
+    top_counts: dict[str, int] = {}
     for decl in ast.declarations:
         if isinstance(decl, FunctionDecl):
-            emission_order.append(decl.name)
+            overload_index = top_counts.get(decl.name, 0)
+            top_counts[decl.name] = overload_index + 1
+            internal_name = (
+                f"{decl.name}#{overload_index}" if decl.name in overloaded_names else decl.name
+            )
+            emission_order.append(
+                (internal_name, None if decl.name in overloaded_names else decl.name)
+            )
         elif isinstance(decl, ClassDecl):
+            member_counts: dict[str, int] = {}
+            member_totals: dict[str, int] = {}
             for member in decl.members:
                 if isinstance(member, FunctionDecl):
-                    emission_order.append(member.name)
+                    member_totals[member.name] = member_totals.get(member.name, 0) + 1
+            for member in decl.members:
+                if isinstance(member, FunctionDecl):
+                    overload_index = member_counts.get(member.name, 0)
+                    member_counts[member.name] = overload_index + 1
+                    internal_name = (
+                        f"{decl.name}.{member.name}#{overload_index}"
+                        if member_totals.get(member.name, 0) > 1
+                        else member.name
+                    )
+                    emission_order.append((internal_name, member.name))
                 elif isinstance(member, GetterDecl):
-                    emission_order.append(f"get_{member.name}")
+                    emission_order.append((f"get_{member.name}", None))
                 elif isinstance(member, SetterDecl):
-                    emission_order.append(f"set_{member.name}")
+                    emission_order.append((f"set_{member.name}", None))
 
-    for idx, name in enumerate(emission_order):
-        func_name_to_idx[name] = idx
+    for idx, (internal_name, public_name) in enumerate(emission_order):
+        func_name_to_idx[internal_name] = idx
+        if public_name is not None:
+            func_name_to_idx[public_name] = idx
 
     reserved_func_count = len(emission_order)
     nested_functions: list[IRFunction] = []
@@ -778,59 +1265,63 @@ def lower_to_ir(ast: Program) -> IRProgram:
         func_name_to_idx[name] = idx
         return idx
 
+    top_emit_counts: dict[str, int] = {}
     for decl in ast.declarations:
         if isinstance(decl, FunctionDecl):
+            overload_index = top_emit_counts.get(decl.name, 0)
+            top_emit_counts[decl.name] = overload_index + 1
+            is_overloaded = decl.name in overloaded_names
+            internal_name = f"{decl.name}#{overload_index}" if is_overloaded else decl.name
             lowering = FuncLowering(
-                decl.name, nested_functions=nested_functions, next_func_idx=reserve_func_idx
+                internal_name, nested_functions=nested_functions, next_func_idx=reserve_func_idx
             )
             lowering._class_info = class_info
             lowering._func_name_to_idx = func_name_to_idx
             lowering._func_decls = func_decls
             lowering._class_init_decls = class_init_decls
             lowering._decorated_names = decorated_names
+            lowering._decorated_classes = decorated_classes
+            lowering._overloaded_names = overloaded_names
             lowering._global_names = global_names
             ir_func = lowering.lower(decl, global_vars if decl.name == "main" else None)
             func_idx = len(program.functions)
             program.functions.append(ir_func)
-            func_name_to_idx[decl.name] = func_idx
+            if is_overloaded:
+                program.overloads.setdefault(decl.name, []).append(func_idx)
+            else:
+                func_name_to_idx[decl.name] = func_idx
         elif isinstance(decl, ClassDecl):
+            method_counts: dict[str, int] = {}
+            method_totals: dict[str, int] = {}
+            for member in decl.members:
+                if isinstance(member, FunctionDecl):
+                    method_totals[member.name] = method_totals.get(member.name, 0) + 1
             for member in decl.members:
                 if isinstance(member, FunctionDecl):
                     method = member
                     method_name = member.name
+                    overload_index = method_counts.get(method_name, 0)
+                    method_counts[method_name] = overload_index + 1
+                    is_method_overloaded = method_totals.get(method_name, 0) > 1
+                    internal_name = (
+                        f"{decl.name}.{method_name}#{overload_index}"
+                        if is_method_overloaded
+                        else method.name
+                    )
                 elif isinstance(member, GetterDecl):
-                    method = FunctionDecl(
-                        name=f"get_{member.name}",
-                        params=[],
-                        return_type=member.return_type,
-                        body=member.body,
-                        is_pub=True,
-                        is_static=False,
-                        info=member.info,
-                    )
+                    method = _getter_function(member)
                     method_name = f"get_{member.name}"
+                    internal_name = method.name
+                    is_method_overloaded = False
                 elif isinstance(member, SetterDecl):
-                    method = FunctionDecl(
-                        name=f"set_{member.name}",
-                        params=[
-                            Param(
-                                name=member.param_name,
-                                type_annotation=None,
-                                default=None,
-                                is_optional=False,
-                            )
-                        ],
-                        return_type=None,
-                        body=member.body,
-                        is_pub=True,
-                        is_static=False,
-                        info=member.info,
-                    )
+                    method = _setter_function(member)
                     method_name = f"set_{member.name}"
+                    internal_name = method.name
+                    is_method_overloaded = False
                 else:
                     continue
                 lowering = FuncLowering(
-                    method.name,
+                    internal_name,
                     is_method=True,
                     class_name=decl.name,
                     nested_functions=nested_functions,
@@ -841,11 +1332,20 @@ def lower_to_ir(ast: Program) -> IRProgram:
                 lowering._func_decls = func_decls
                 lowering._class_init_decls = class_init_decls
                 lowering._decorated_names = decorated_names
+                lowering._decorated_classes = decorated_classes
+                lowering._overloaded_names = overloaded_names
                 lowering._global_names = global_names
                 ir_func = lowering.lower(method)
                 func_idx = len(program.functions)
                 program.functions.append(ir_func)
-                class_info[decl.name]["methods"][method_name] = func_idx
+                if is_method_overloaded:
+                    class_info[decl.name]["method_overloads"][method_name].append(func_idx)
+                elif isinstance(member, GetterDecl):
+                    class_info[decl.name]["getters"][member.name] = func_idx
+                elif isinstance(member, SetterDecl):
+                    class_info[decl.name]["setters"][member.name] = func_idx
+                else:
+                    class_info[decl.name]["methods"][method_name] = func_idx
 
     nested_functions.sort(key=lambda fn: getattr(fn, "reserved_func_idx"))
     program.functions.extend(nested_functions)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import NoReturn, Optional, Sequence
 
-from src.frontend.lexer.token_types import Token, TokenInfo, TokenType
+from src.frontend.lexer.token_types import Token, TokenType
 from src.frontend.parser.ast_nodes import (
     AssignExpr,
     BinaryExpr,
@@ -14,16 +14,20 @@ from src.frontend.parser.ast_nodes import (
     CompoundAssignExpr,
     ContinueStmt,
     Decorator,
+    DestructureAssignStmt,
     ElvExpr,
     ErrExpr,
     Expr,
     ExprStmt,
     FloatLiteral,
+    ForInStmt,
     FunctionDecl,
     GetterDecl,
     Identifier,
+    IfExpr,
     IfStmt,
     ImportDecl,
+    IncrementExpr,
     IndexExpr,
     IntLiteral,
     ItExpr,
@@ -33,13 +37,17 @@ from src.frontend.parser.ast_nodes import (
     MatchArm,
     MatchPattern,
     MemberExpr,
+    NullCoalesceExpr,
     NullLiteral,
     OkExpr,
     Param,
     PatternMatchExpr,
     Program,
+    PropagateExpr,
+    RangeExpr,
     ReturnStmt,
     SafeCallExpr,
+    SafeMemberExpr,
     SetterDecl,
     SliceExpr,
     Stmt,
@@ -50,6 +58,7 @@ from src.frontend.parser.ast_nodes import (
     TryCatchStmt,
     UnaryExpr,
     VarDecl,
+    WhileStmt,
 )
 
 
@@ -61,6 +70,7 @@ class Parser:
     def __init__(self, tokens: list[Token]) -> None:
         self._tokens = tokens
         self._pos = 0
+        self.errors: list[str] = []
 
     def _cur(self) -> Token:
         return self._tokens[self._pos]
@@ -99,39 +109,276 @@ class Parser:
             return self._advance()
         return None
 
-    def _is_lambda_ahead(self) -> bool:
-        """Lookahead to check if 'fn' at current position starts a lambda definition."""
-        pos = self._pos
-        if pos + 1 >= len(self._tokens) or self._tokens[pos + 1].type != TokenType.LPAR:
-            return False
+    def _at_contextual(self, literal: str) -> bool:
+        return self._at(TokenType.ID) and self._cur().literal == literal
+
+    def _synchronize_top_level(self) -> None:
+        if not self._at(TokenType.EOF):
+            self._advance()
         depth = 0
-        i = pos + 1
-        has_type_annotation = False
-        while i < len(self._tokens):
-            t = self._tokens[i]
-            if t.type == TokenType.LPAR:
+        while not self._at(TokenType.EOF):
+            tok_type = self._cur().type
+            if tok_type == TokenType.LBRA:
                 depth += 1
-            elif t.type == TokenType.RPAR:
+            elif tok_type == TokenType.RBRA:
+                if depth == 0:
+                    self._advance()
+                    break
+                depth -= 1
+            elif depth == 0 and tok_type in (
+                TokenType.AT,
+                TokenType.PUBLIC,
+                TokenType.PRIVATE,
+                TokenType.IMPORT,
+                TokenType.CONST,
+                TokenType.ID,
+            ):
+                break
+            self._advance()
+
+    def _next_after_optional_type_params(self, index: int) -> int:
+        if index >= len(self._tokens) or self._tokens[index].type != TokenType.LT:
+            return index
+        index += 1
+        expect_name = True
+        while index < len(self._tokens):
+            token_type = self._tokens[index].type
+            if expect_name:
+                if token_type != TokenType.ID:
+                    return index
+                index += 1
+                expect_name = False
+                continue
+            if token_type == TokenType.COMMA:
+                index += 1
+                expect_name = True
+                continue
+            if token_type == TokenType.GT:
+                return index + 1
+            return index
+        return index
+
+    def _parse_type_params(self) -> tuple[str, ...]:
+        if not self._match(TokenType.LT):
+            return ()
+        params: list[str] = []
+        if self._at(TokenType.GT):
+            self._error("Generic parameter list cannot be empty")
+        while True:
+            params.append(self._literal(self._expect(TokenType.ID)))
+            if not self._match(TokenType.COMMA):
+                break
+        self._expect(TokenType.GT)
+        if len(params) != len(set(params)):
+            self._error("Generic parameter names must be unique")
+        return tuple(params)
+
+    def _next_after_type_name(self, index: int) -> Optional[int]:
+        if index >= len(self._tokens) or self._tokens[index].type != TokenType.ID:
+            return None
+        depth = 0
+        saw_token = False
+        while index < len(self._tokens):
+            token_type = self._tokens[index].type
+            if (
+                depth == 0
+                and saw_token
+                and token_type
+                in {
+                    TokenType.COMMA,
+                    TokenType.RPAR,
+                    TokenType.ASSIGN,
+                    TokenType.LBRA,
+                    TokenType.RBRA,
+                    TokenType.SEM,
+                    TokenType.DOT,
+                    TokenType.QUEST,
+                    TokenType.ARROW,
+                }
+            ):
+                return index
+            if depth == 0 and saw_token and token_type == TokenType.ID:
+                return index
+            if token_type == TokenType.ID:
+                saw_token = True
+                index += 1
+            elif token_type == TokenType.LT:
+                saw_token = True
+                depth += 1
+                index += 1
+            elif token_type == TokenType.GT:
+                if depth <= 0:
+                    return index
+                depth -= 1
+                index += 1
+            elif token_type == TokenType.SHIFTR:
+                if depth < 2:
+                    return None
+                depth -= 2
+                index += 1
+            elif token_type == TokenType.COMMA and depth > 0:
+                index += 1
+            else:
+                return None
+        return index if saw_token and depth == 0 else None
+
+    def _skip_type_annotation_in_range(self, index: int, end: int) -> Optional[int]:
+        if index >= end or self._tokens[index].type != TokenType.ID:
+            return None
+        depth = 0
+        saw_token = False
+        while index < end:
+            token_type = self._tokens[index].type
+            if depth == 0 and saw_token and token_type == TokenType.COMMA:
+                break
+            if token_type == TokenType.ID:
+                saw_token = True
+                index += 1
+            elif token_type == TokenType.LT:
+                saw_token = True
+                depth += 1
+                index += 1
+            elif token_type == TokenType.GT:
+                depth -= 1
+                if depth < 0:
+                    return None
+                index += 1
+            elif token_type == TokenType.SHIFTR:
+                depth -= 2
+                if depth < 0:
+                    return None
+                index += 1
+            elif token_type == TokenType.COMMA and depth > 0:
+                index += 1
+            else:
+                return None
+        return index if saw_token and depth == 0 else None
+
+    def _parse_type_name(self) -> str:
+        if not self._at(TokenType.ID):
+            self._error(f"Expected type name, got {self._cur().type.value}")
+
+        parts: list[str] = []
+        depth = 0
+        saw_token = False
+        terminators = {
+            TokenType.COMMA,
+            TokenType.RPAR,
+            TokenType.ASSIGN,
+            TokenType.LBRA,
+            TokenType.RBRA,
+            TokenType.SEM,
+            TokenType.DOT,
+            TokenType.QUEST,
+            TokenType.ARROW,
+        }
+
+        while not self._at(TokenType.EOF):
+            tok = self._cur()
+            token_type = tok.type
+            if depth == 0 and saw_token and token_type in terminators:
+                break
+            if depth == 0 and saw_token and token_type == TokenType.ID:
+                break
+            if token_type == TokenType.ID:
+                parts.append(self._literal(tok))
+                self._advance()
+                saw_token = True
+            elif token_type == TokenType.LT:
+                parts.append("<")
+                self._advance()
+                depth += 1
+                saw_token = True
+            elif token_type == TokenType.GT:
+                if depth <= 0:
+                    break
+                parts.append(">")
+                self._advance()
+                depth -= 1
+            elif token_type == TokenType.SHIFTR:
+                if depth < 2:
+                    self._error("Unexpected '>>' in type annotation")
+                parts.append(">>")
+                self._advance()
+                depth -= 2
+            elif token_type == TokenType.COMMA and depth > 0:
+                parts.append(",")
+                self._advance()
+            else:
+                if depth > 0:
+                    self._error(f"Unexpected token {token_type.value} in type annotation")
+                break
+
+        if not saw_token:
+            self._error("Expected type name")
+        if depth != 0:
+            self._error("Unterminated generic type annotation")
+        return "".join(parts)
+
+    def _matching_rpar_index(self, start: int) -> Optional[int]:
+        depth = 0
+        for i in range(start, len(self._tokens)):
+            token_type = self._tokens[i].type
+            if token_type == TokenType.LPAR:
+                depth += 1
+            elif token_type == TokenType.RPAR:
                 depth -= 1
                 if depth == 0:
-                    if i + 1 < len(self._tokens):
-                        next_tok = self._tokens[i + 1]
-                        if next_tok.type in (TokenType.LBRA, TokenType.COLON):
-                            return True
-                        if has_type_annotation:
-                            return True
+                    return i
+        return None
+
+    def _looks_like_lambda_params(self, start: int, end: int) -> bool:
+        if start == end:
+            return True
+        i = start
+        expect_param = True
+        while i < end:
+            if not expect_param:
+                if self._tokens[i].type != TokenType.COMMA:
                     return False
-            elif t.type == TokenType.COLON and depth == 1:
-                has_type_annotation = True
+                i += 1
+                expect_param = True
+                continue
+            if self._tokens[i].type != TokenType.ID:
+                return False
             i += 1
-        return False
+            if i < end and self._tokens[i].type == TokenType.COLON:
+                i += 1
+                next_i = self._skip_type_annotation_in_range(i, end)
+                if next_i is None:
+                    return False
+                i = next_i
+            expect_param = False
+        return not expect_param
+
+    def _is_paren_lambda_ahead(self) -> bool:
+        """Lookahead for the modern `(params) -> body` lambda syntax."""
+        if not self._at(TokenType.LPAR):
+            return False
+        rpar = self._matching_rpar_index(self._pos)
+        if rpar is None or rpar + 1 >= len(self._tokens):
+            return False
+        if not self._looks_like_lambda_params(self._pos + 1, rpar):
+            return False
+        next_token = self._tokens[rpar + 1]
+        if next_token.type == TokenType.ARROW:
+            return True
+        if next_token.type != TokenType.COLON:
+            return False
+        return rpar + 3 < len(self._tokens) and self._tokens[rpar + 3].type == TokenType.ARROW
 
     @staticmethod
     def parse(tokens: list[Token]) -> Program:
         p = Parser(tokens)
         decls: list[TopLevel] = []
         while not p._at(TokenType.EOF):
-            decls.append(p._parse_top_level())
+            try:
+                decls.append(p._parse_top_level())
+            except ParseError as err:
+                p.errors.append(str(err))
+                p._synchronize_top_level()
+        if p.errors:
+            raise ParseError("\n".join(p.errors))
         return Program(declarations=decls)
 
     def _parse_top_level(self) -> TopLevel:
@@ -152,11 +399,19 @@ class Parser:
         if self._match(TokenType.CONST):
             is_const = True
 
-        if self._at(TokenType.ID) and self._peek(1).type == TokenType.LBRA:
-            if decorators:
-                self._error("Decorators can only be applied to functions")
-            name_tok = self._advance()
-            return self._parse_class(self._literal(name_tok), is_pub, name_tok.info)
+        if self._at(TokenType.ID):
+            after_name = self._next_after_optional_type_params(self._pos + 1)
+            if after_name < len(self._tokens):
+                if self._tokens[after_name].type == TokenType.LBRA:
+                    return self._parse_class(is_pub, tuple(decorators))
+                if self._tokens[after_name].type == TokenType.COLON:
+                    after_base = self._next_after_type_name(after_name + 1)
+                    if (
+                        after_base is not None
+                        and after_base < len(self._tokens)
+                        and self._tokens[after_base].type == TokenType.LBRA
+                    ):
+                        return self._parse_class(is_pub, tuple(decorators))
 
         return self._parse_func_or_var(is_pub, is_const, decorators)
 
@@ -176,13 +431,26 @@ class Parser:
         self._match(TokenType.SEM)
         return ImportDecl(path=self._literal(path_tok), info=info)
 
-    def _parse_class(self, name: str, is_pub: bool, info: TokenInfo) -> ClassDecl:
+    def _parse_class(self, is_pub: bool, decorators: Sequence[Decorator] = ()) -> ClassDecl:
+        name_tok = self._expect(TokenType.ID)
+        type_params = self._parse_type_params()
+        base_type = None
+        if self._match(TokenType.COLON):
+            base_type = self._parse_type_name()
         self._expect(TokenType.LBRA)
         members: list[FunctionDecl | VarDecl | GetterDecl | SetterDecl] = []
         while not self._at(TokenType.RBRA, TokenType.EOF):
             members.append(self._parse_class_member())
         self._expect(TokenType.RBRA)
-        return ClassDecl(name=name, members=members, is_pub=is_pub, info=info)
+        return ClassDecl(
+            name=self._literal(name_tok),
+            members=members,
+            is_pub=is_pub,
+            info=name_tok.info,
+            type_params=type_params,
+            base_type=base_type,
+            decorators=tuple(decorators),
+        )
 
     def _parse_class_member(self) -> FunctionDecl | VarDecl | GetterDecl | SetterDecl:
         decorators = self._parse_decorators()
@@ -191,8 +459,8 @@ class Parser:
         is_static = False
         if self._match(TokenType.PUBLIC):
             is_pub = True
-        else:
-            self._match(TokenType.PRIVATE)
+        elif self._match(TokenType.PRIVATE):
+            is_pub = False
 
         if self._match(TokenType.STATIC):
             is_static = True
@@ -202,28 +470,24 @@ class Parser:
                 self._error("Decorators cannot be applied to init")
             return self._parse_init(is_pub)
 
-        if self._at(TokenType.GETTER):
+        if self._at_contextual("get") and self._peek(1).type == TokenType.ID:
             if decorators:
                 self._error("Decorators cannot be applied to getters")
+            if is_static:
+                self._error("Getters cannot be static")
             return self._parse_getter(is_pub)
-        if self._at(TokenType.SETTER):
+        if self._at_contextual("set") and self._peek(1).type == TokenType.ID:
             if decorators:
                 self._error("Decorators cannot be applied to setters")
+            if is_static:
+                self._error("Setters cannot be static")
             return self._parse_setter(is_pub)
 
         if self._at(TokenType.ID) and self._peek(1).type == TokenType.COLON:
             if decorators:
                 self._error("Decorators can only be applied to functions")
-            var = self._parse_var_decl(is_pub, False)
-            if self._match(TokenType.DOT):
-                if self._at(TokenType.GETTER):
-                    return self._parse_getter_after_var(var)
-                elif self._at(TokenType.SETTER):
-                    return self._parse_setter_after_var(var)
-            return var
+            return self._parse_var_decl(is_pub, False)
 
-        if decorators:
-            self._error("Decorators on class methods are not supported yet")
         return self._parse_function_decl(is_pub, is_static, decorators)
 
     def _parse_init(self, is_pub: bool) -> FunctionDecl:
@@ -243,39 +507,47 @@ class Parser:
 
     def _parse_getter(self, is_pub: bool) -> GetterDecl:
         info = self._cur().info
-        self._expect(TokenType.GETTER)
+        self._expect(TokenType.ID)
         name = self._literal(self._expect(TokenType.ID))
+        params = self._parse_params()
+        if params:
+            self._error("Getters cannot have parameters")
+        if not self._match(TokenType.COLON):
+            self._error("Getters must declare a return type")
+        return_type = self._parse_type_name()
         body = self._parse_block()
-        return GetterDecl(name=name, return_type=None, body=body, info=info)
-
-    def _parse_getter_after_var(self, var: VarDecl) -> GetterDecl:
-        self._expect(TokenType.GETTER)
-        body = self._parse_block()
-        return GetterDecl(name=var.name, return_type=var.type_annotation, body=body, info=var.info)
+        return GetterDecl(name=name, return_type=return_type, body=body, is_pub=is_pub, info=info)
 
     def _parse_setter(self, is_pub: bool) -> SetterDecl:
         info = self._cur().info
-        self._expect(TokenType.SETTER)
+        self._expect(TokenType.ID)
         name = self._literal(self._expect(TokenType.ID))
-        self._expect(TokenType.LPAR)
-        param_name = self._literal(self._expect(TokenType.ID))
-        self._expect(TokenType.RPAR)
+        params = self._parse_params()
+        if len(params) != 1:
+            self._error("Setters must have exactly one parameter")
+        param = params[0]
+        if param.type_annotation is None:
+            self._error("Setter parameter must declare a type")
+        if param.default is not None or param.is_optional:
+            self._error("Setter parameter cannot be optional or have a default value")
+        if self._match(TokenType.COLON):
+            self._error("Setters cannot declare a return type")
         body = self._parse_block()
-        return SetterDecl(name=name, param_name=param_name, body=body, info=info)
-
-    def _parse_setter_after_var(self, var: VarDecl) -> SetterDecl:
-        self._expect(TokenType.SETTER)
-        self._expect(TokenType.LPAR)
-        param_name = self._literal(self._expect(TokenType.ID))
-        self._expect(TokenType.RPAR)
-        body = self._parse_block()
-        return SetterDecl(name=var.name, param_name=param_name, body=body, info=var.info)
+        return SetterDecl(
+            name=name,
+            param_name=param.name,
+            param_type=param.type_annotation,
+            body=body,
+            is_pub=is_pub,
+            info=info,
+        )
 
     def _parse_func_or_var(
         self, is_pub: bool, is_const: bool, decorators: Sequence[Decorator] = ()
     ) -> TopLevel:
         if self._at(TokenType.ID):
-            if self._peek(1).type == TokenType.LPAR:
+            after_name = self._next_after_optional_type_params(self._pos + 1)
+            if after_name < len(self._tokens) and self._tokens[after_name].type == TokenType.LPAR:
                 return self._parse_function_decl(is_pub, False, decorators)
             elif self._peek(1).type == TokenType.COLON:
                 if decorators:
@@ -289,10 +561,11 @@ class Parser:
         self, is_pub: bool, is_static: bool, decorators: Sequence[Decorator] = ()
     ) -> FunctionDecl:
         name_tok = self._expect(TokenType.ID)
+        type_params = self._parse_type_params()
         params = self._parse_params()
         return_type = None
         if self._match(TokenType.COLON):
-            return_type = self._literal(self._expect(TokenType.ID))
+            return_type = self._parse_type_name()
         body = self._parse_block()
         return FunctionDecl(
             name=self._literal(name_tok),
@@ -302,6 +575,7 @@ class Parser:
             is_pub=is_pub,
             is_static=is_static,
             info=name_tok.info,
+            type_params=type_params,
             decorators=tuple(decorators),
         )
 
@@ -321,7 +595,7 @@ class Parser:
         default = None
         is_optional = False
         if self._match(TokenType.COLON):
-            type_ann = self._literal(self._expect(TokenType.ID))
+            type_ann = self._parse_type_name()
         if self._match(TokenType.QUEST):
             is_optional = True
         if self._match(TokenType.ASSIGN):
@@ -333,7 +607,7 @@ class Parser:
         name_tok = self._expect(TokenType.ID)
         type_ann = None
         if self._match(TokenType.COLON):
-            type_ann = self._literal(self._expect(TokenType.ID))
+            type_ann = self._parse_type_name()
         init = None
         if self._match(TokenType.ASSIGN):
             init = self._parse_expression()
@@ -361,6 +635,10 @@ class Parser:
             return self._parse_return()
         if self._at(TokenType.IF):
             return self._parse_if()
+        if self._at(TokenType.WHILE):
+            return self._parse_while()
+        if self._at(TokenType.FOR):
+            return self._parse_for_in()
         if self._at(TokenType.LOOP):
             return self._parse_loop()
         if self._at(TokenType.BREAK):
@@ -373,6 +651,8 @@ class Parser:
             return self._parse_try_catch()
         if self._at(TokenType.LBRA):
             return self._parse_block()
+        if self._is_destructure_assignment_ahead():
+            return self._parse_destructure_assignment()
 
         if self._at(TokenType.ID) and self._peek(1).type == TokenType.COLON:
             is_pub = False
@@ -417,6 +697,52 @@ class Parser:
             else_branch=else_branch,
             info=info,
         )
+
+    def _parse_if_expr(self) -> IfExpr:
+        info = self._cur().info
+        self._expect(TokenType.IF)
+        self._expect(TokenType.LPAR)
+        cond = self._parse_expression()
+        self._expect(TokenType.RPAR)
+        then = self._parse_block()
+
+        elifs: list[tuple[Expr, BlockStmt]] = []
+        while self._match(TokenType.ELIF):
+            self._expect(TokenType.LPAR)
+            elif_cond = self._parse_expression()
+            self._expect(TokenType.RPAR)
+            elif_body = self._parse_block()
+            elifs.append((elif_cond, elif_body))
+
+        else_branch = None
+        if self._match(TokenType.ELSE):
+            else_branch = self._parse_block()
+
+        return IfExpr(
+            condition=cond,
+            then_branch=then,
+            elif_branches=elifs,
+            else_branch=else_branch,
+            info=info,
+        )
+
+    def _parse_while(self) -> WhileStmt:
+        info = self._cur().info
+        self._expect(TokenType.WHILE)
+        self._expect(TokenType.LPAR)
+        condition = self._parse_expression()
+        self._expect(TokenType.RPAR)
+        body = self._parse_block()
+        return WhileStmt(condition=condition, body=body, info=info)
+
+    def _parse_for_in(self) -> ForInStmt:
+        info = self._cur().info
+        self._expect(TokenType.FOR)
+        name = self._literal(self._expect(TokenType.ID))
+        self._expect(TokenType.IN)
+        iterable = self._parse_expression()
+        body = self._parse_block()
+        return ForInStmt(var_name=name, iterable=iterable, body=body, info=info)
 
     def _parse_loop(self) -> LoopStmt:
         info = self._cur().info
@@ -473,11 +799,45 @@ class Parser:
         self._match(TokenType.SEM)
         return ExprStmt(expr=expr, info=expr.info)
 
+    def _is_destructure_assignment_ahead(self) -> bool:
+        if not self._at(TokenType.LPAR):
+            return False
+        index = self._pos + 1
+        if index >= len(self._tokens) or self._tokens[index].type != TokenType.ID:
+            return False
+        index += 1
+        seen_comma = False
+        while index < len(self._tokens):
+            token_type = self._tokens[index].type
+            if token_type == TokenType.COMMA:
+                seen_comma = True
+                index += 1
+                if index >= len(self._tokens) or self._tokens[index].type != TokenType.ID:
+                    return False
+                index += 1
+                continue
+            if token_type == TokenType.RPAR:
+                return seen_comma and self._peek(index - self._pos + 1).type == TokenType.ASSIGN
+            return False
+        return False
+
+    def _parse_destructure_assignment(self) -> DestructureAssignStmt:
+        info = self._cur().info
+        self._expect(TokenType.LPAR)
+        targets = [self._literal(self._expect(TokenType.ID))]
+        while self._match(TokenType.COMMA):
+            targets.append(self._literal(self._expect(TokenType.ID)))
+        self._expect(TokenType.RPAR)
+        self._expect(TokenType.ASSIGN)
+        value = self._parse_expression()
+        self._match(TokenType.SEM)
+        return DestructureAssignStmt(targets=tuple(targets), value=value, info=info)
+
     def _parse_expression(self) -> Expr:
         return self._parse_assignment()
 
     def _parse_assignment(self) -> Expr:
-        left = self._parse_elvis()
+        left = self._parse_range()
         if self._at(TokenType.ASSIGN):
             info = self._advance().info
             right = self._parse_assignment()
@@ -502,6 +862,18 @@ class Parser:
             self._advance()
             right = self._parse_or()
             return ElvExpr(left=left, right=right, info=left.info)
+        if self._match(TokenType.NULL_COALESCE):
+            right = self._parse_elvis()
+            return NullCoalesceExpr(left=left, right=right, info=left.info)
+        return left
+
+    def _parse_range(self) -> Expr:
+        left = self._parse_elvis()
+        if self._at(TokenType.RANGE, TokenType.RANGE_INCLUSIVE):
+            inclusive = self._cur().type == TokenType.RANGE_INCLUSIVE
+            info = self._advance().info
+            right = self._parse_elvis()
+            return RangeExpr(start=left, end=right, inclusive=inclusive, info=info)
         return left
 
     def _parse_or(self) -> Expr:
@@ -617,6 +989,15 @@ class Parser:
         return left
 
     def _parse_unary(self) -> Expr:
+        if self._at(TokenType.PLUSPLUS, TokenType.MINUSMINUS):
+            token = self._advance()
+            target = self._parse_unary()
+            delta = 1 if token.type == TokenType.PLUSPLUS else -1
+            return IncrementExpr(
+                target=target,
+                delta=delta,
+                info=token.info,
+            )
         if self._at(TokenType.NOTL):
             info = self._advance().info
             operand = self._parse_unary()
@@ -645,16 +1026,34 @@ class Parser:
                 self._advance()
                 member = self._literal(self._expect(TokenType.ID))
                 args: list[Expr] = []
+                has_call = False
                 if self._at(TokenType.LPAR):
+                    has_call = True
                     self._advance()
                     if not self._at(TokenType.RPAR):
                         args.append(self._parse_expression())
                         while self._match(TokenType.COMMA):
                             args.append(self._parse_expression())
                     self._expect(TokenType.RPAR)
-                expr = SafeCallExpr(obj=expr, member=member, args=args, info=expr.info)
+                if has_call:
+                    expr = SafeCallExpr(obj=expr, member=member, args=args, info=expr.info)
+                else:
+                    expr = SafeMemberExpr(obj=expr, member=member, info=expr.info)
+            elif self._at(TokenType.QUEST) and self._peek(1).type != TokenType.COLON:
+                info = self._advance().info
+                expr = PropagateExpr(value=expr, info=info)
             elif self._at(TokenType.ARROW):
                 expr = self._parse_pattern_match(expr)
+            elif self._at(TokenType.PLUSPLUS, TokenType.MINUSMINUS) and not isinstance(
+                expr, IncrementExpr
+            ):
+                token = self._advance()
+                delta = 1 if token.type == TokenType.PLUSPLUS else -1
+                expr = IncrementExpr(
+                    target=expr,
+                    delta=delta,
+                    info=token.info,
+                )
             else:
                 break
         return expr
@@ -718,7 +1117,7 @@ class Parser:
 
     def _parse_match_pattern(self) -> MatchPattern:
         if self._match(TokenType.IS):
-            type_name = self._literal(self._expect(TokenType.ID))
+            type_name = self._parse_type_name()
             return MatchPattern(kind="type", value=type_name)
         if self._at(
             TokenType.STRING,
@@ -740,9 +1139,12 @@ class Parser:
     def _parse_primary(self) -> Expr:
         tok = self._cur()
 
+        if self._at(TokenType.IF):
+            return self._parse_if_expr()
+
         if self._at(TokenType.INT):
             self._advance()
-            return IntLiteral(value=int(self._literal(tok)), info=tok.info)
+            return IntLiteral(value=int(self._literal(tok), 0), info=tok.info)
 
         if self._at(TokenType.FLOAT):
             self._advance()
@@ -750,7 +1152,7 @@ class Parser:
 
         if self._at(TokenType.STRING):
             self._advance()
-            return StrLiteral(value=self._literal(tok), info=tok.info)
+            return self._parse_string_literal(self._literal(tok), tok.info)
 
         if self._at(TokenType.TRUE):
             self._advance()
@@ -799,8 +1201,8 @@ class Parser:
             self._expect(TokenType.RPAR)
             return ListExpr(elements=elems, info=tok.info)
 
-        # Lambda: fn(params) { body } or fn(params) expr
-        if self._at(TokenType.ID) and tok.literal == "fn" and self._is_lambda_ahead():
+        # Lambda: (params) -> { body } or (params) -> expr.
+        if self._at(TokenType.LPAR) and self._is_paren_lambda_ahead():
             return self._parse_lambda()
 
         # Identifier
@@ -817,31 +1219,110 @@ class Parser:
 
         self._error(f"Unexpected token {tok.type.value}")
 
-    def _parse_lambda(self) -> LambdaExpr:
-        info = self._cur().info
-        self._advance()  # fn
+    def _parse_string_literal(self, value: str, info) -> Expr:
+        parts: list[Expr] = []
+        literal: list[str] = []
+        index = 0
+
+        def flush_literal() -> None:
+            if literal:
+                parts.append(StrLiteral(value="".join(literal), info=info))
+                literal.clear()
+
+        while index < len(value):
+            ch = value[index]
+            if ch == "\\" and index + 1 < len(value) and value[index + 1] in "{}":
+                literal.append(value[index + 1])
+                index += 2
+                continue
+            if ch != "{":
+                literal.append(ch)
+                index += 1
+                continue
+
+            end = value.find("}", index + 1)
+            if end < 0:
+                literal.append(ch)
+                index += 1
+                continue
+            expr_text = value[index + 1 : end].strip()
+            if not expr_text:
+                literal.append("{}")
+                index = end + 1
+                continue
+            try:
+                interpolated = self._parse_interpolation_expr(expr_text, info)
+            except (ParseError, SyntaxError):
+                literal.append(value[index : end + 1])
+                index = end + 1
+                continue
+            flush_literal()
+            parts.append(interpolated)
+            index = end + 1
+
+        flush_literal()
+        if not parts:
+            return StrLiteral(value=value, info=info)
+
+        expr = parts[0]
+        for part in parts[1:]:
+            expr = BinaryExpr(op="+", left=expr, right=part, info=info)
+        return expr
+
+    def _parse_interpolation_expr(self, source: str, info) -> Expr:
+        from src.frontend.lexer.tokenizer import Tokenizer
+
+        tokens = Tokenizer.tokenize(source, file_name=info.file)
+        parser = Parser(tokens)
+        expr = parser._parse_expression()
+        if not parser._at(TokenType.EOF):
+            self._error("Invalid string interpolation expression")
+        return CallExpr(
+            callee=Identifier(name="to_str", info=info),
+            args=(expr,),
+            info=info,
+        )
+
+    def _parse_lambda_params(self) -> list[tuple[str, Optional[str]]]:
         self._expect(TokenType.LPAR)
         params: list[tuple[str, Optional[str]]] = []
         if not self._at(TokenType.RPAR):
-            pname = self._literal(self._expect(TokenType.ID))
-            ptype = None
-            if self._match(TokenType.COLON):
-                ptype = self._literal(self._expect(TokenType.ID))
-            params.append((pname, ptype))
-            while self._match(TokenType.COMMA):
+            while True:
                 pname = self._literal(self._expect(TokenType.ID))
                 ptype = None
                 if self._match(TokenType.COLON):
-                    ptype = self._literal(self._expect(TokenType.ID))
+                    ptype = self._parse_type_name()
                 params.append((pname, ptype))
+                if not self._match(TokenType.COMMA):
+                    break
         self._expect(TokenType.RPAR)
+        return params
+
+    def _parse_lambda_body(self) -> Expr | BlockStmt:
+        if self._at(TokenType.LBRA):
+            return self._parse_block()
+        if self._at(
+            TokenType.RETURN,
+            TokenType.IF,
+            TokenType.LOOP,
+            TokenType.BREAK,
+            TokenType.CONTINUE,
+            TokenType.THROW,
+            TokenType.TRY,
+        ):
+            stmt = self._parse_statement()
+            return BlockStmt(statements=(stmt,), info=stmt.info)
+        return self._parse_expression()
+
+    def _parse_lambda(self) -> LambdaExpr:
+        info = self._cur().info
+        params = self._parse_lambda_params()
 
         return_type = None
         if self._match(TokenType.COLON):
-            return_type = self._literal(self._expect(TokenType.ID))
+            return_type = self._parse_type_name()
 
-        if self._at(TokenType.LBRA):
-            body = self._parse_block()
-        else:
-            body = self._parse_expression()
+        self._expect(TokenType.ARROW)
+
+        body = self._parse_lambda_body()
         return LambdaExpr(params=params, return_type=return_type, body=body, info=info)
