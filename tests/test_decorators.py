@@ -1,24 +1,36 @@
 from __future__ import annotations
 
-import main as suma_main
-from src.backend.codegen.serializer import deserialize, serialize
-from src.runtime.vm.vm import VM
+import os
+
+import pytest
+
+from suma_lang.backend.codegen.serializer import deserialize, serialize
+from suma_lang.cli import CompileOptions, compile_source
+from suma_lang.runtime.vm.vm import VM
 
 
 def _compile(source: str, use_ir: bool = False):
-    old_use_ir = suma_main._use_ir
-    try:
-        suma_main._use_ir = use_ir
-        return suma_main.compile_source(source, "<decorator-test>")
-    finally:
-        suma_main._use_ir = old_use_ir
+    return compile_source(
+        source,
+        "<decorator-test>",
+        options=CompileOptions(use_ir=use_ir),
+    )
 
 
 def _run(source: str, use_ir: bool = False):
     return VM(_compile(source, use_ir=use_ir)).run()
 
 
-def test_python_decorator_replaces_function():
+@pytest.fixture
+def allow_decorator_helpers(monkeypatch):
+    existing = os.environ.get("SUMA_PY_IMPORTS", "")
+    allowed = "examples.decorator_helpers"
+    if existing:
+        allowed = f"{existing},{allowed}"
+    monkeypatch.setenv("SUMA_PY_IMPORTS", allowed)
+
+
+def test_python_decorator_replaces_function(allow_decorator_helpers):
     source = """
 import "py:examples.decorator_helpers"
 
@@ -34,7 +46,7 @@ pub main(): Int {
     assert _run(source) == 42
 
 
-def test_decorator_chain_order():
+def test_decorator_chain_order(allow_decorator_helpers):
     source = """
 import "py:examples.decorator_helpers"
 
@@ -51,7 +63,7 @@ pub main(): Int {
     assert _run(source) == 42
 
 
-def test_decorator_ir_pipeline():
+def test_decorator_ir_pipeline(allow_decorator_helpers):
     source = """
 import "py:examples.decorator_helpers"
 
@@ -67,7 +79,7 @@ pub main(): Int {
     assert _run(source, use_ir=True) == 42
 
 
-def test_decorators_survive_serialization():
+def test_decorators_survive_serialization(allow_decorator_helpers):
     source = """
 import "py:examples.decorator_helpers"
 

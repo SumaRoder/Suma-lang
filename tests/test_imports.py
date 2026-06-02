@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
 from main import CompileSourceError, compile_source
-from src.runtime.vm.vm import VM
+from suma_lang.runtime.vm.vm import VM
 
 
 def _run(source: str, filename: str, import_paths: list[str] | None = None):
@@ -77,6 +78,50 @@ def test_stdlib_imports():
     assert _run(source, str(path)) == 201
 
 
+def test_stdlib_paths_env_uses_list_order(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        first = root / "stdlib-first"
+        second = root / "stdlib-second"
+        first.mkdir()
+        second.mkdir()
+        (first / "ordering.suma").write_text("""
+pub value(): Int {
+    return 40
+}
+""")
+        (second / "ordering.suma").write_text("""
+pub value(): Int {
+    return 99
+}
+""")
+        monkeypatch.setenv(
+            "SUMA_STDLIB_PATHS",
+            os.pathsep.join([str(first), str(second)]),
+        )
+        source = """
+import "ordering"
+
+pub main(): Int {
+    return value() + 2
+}
+"""
+        assert _run(source, str(root / "main.suma")) == 42
+
+
+def test_stdlib_paths_env_keeps_builtin_fallback(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("SUMA_STDLIB_PATHS", tmpdir)
+        source = """
+import "core"
+
+pub main(): Int {
+    return clamp(99, 0, 42)
+}
+"""
+        assert _run(source, "<stdin>") == 42
+
+
 def test_duplicate_import_is_deduped():
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -110,7 +155,7 @@ pub main(): Int {
 """
         try:
             _run(source, str(root / "main.suma"))
-            assert False, "expected import failure"
+            raise AssertionError("expected import failure")
         except CompileSourceError as exc:
             assert "Cannot resolve import 'missing_mod'" in str(exc)
 
@@ -130,7 +175,7 @@ import "./a.suma"
 """)
         try:
             _run((root / "a.suma").read_text(), str(root / "a.suma"))
-            assert False, "expected circular import failure"
+            raise AssertionError("expected circular import failure")
         except CompileSourceError as exc:
             assert "Circular import detected" in str(exc)
 

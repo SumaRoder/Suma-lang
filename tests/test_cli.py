@@ -5,28 +5,16 @@ from pathlib import Path
 
 import pytest
 
-import src.cli as cli
+import suma_lang.cli as cli
 
 
 def _run_cli(args: list[str], *, capsys, source_path: Path, expected: str = "55") -> None:
     old_argv = sys.argv
-    old_optimize = cli._optimize
-    old_use_ir = cli._use_ir
-    old_dump_opt = cli._dump_opt
-    old_import_paths = list(cli._import_paths)
     try:
         sys.argv = ["suma", *args, "run", str(source_path)]
-        cli._optimize = True
-        cli._use_ir = False
-        cli._dump_opt = False
-        cli._import_paths = []
         cli.main()
     finally:
         sys.argv = old_argv
-        cli._optimize = old_optimize
-        cli._use_ir = old_use_ir
-        cli._dump_opt = old_dump_opt
-        cli._import_paths = old_import_paths
 
     captured = capsys.readouterr()
     assert captured.out.strip() == expected
@@ -53,23 +41,11 @@ pub main(): Int {
 """)
 
     old_argv = sys.argv
-    old_optimize = cli._optimize
-    old_use_ir = cli._use_ir
-    old_dump_opt = cli._dump_opt
-    old_import_paths = list(cli._import_paths)
     try:
         sys.argv = ["suma", "--dump-opt", "run", str(source_path)]
-        cli._optimize = True
-        cli._use_ir = False
-        cli._dump_opt = False
-        cli._import_paths = []
         cli.main()
     finally:
         sys.argv = old_argv
-        cli._optimize = old_optimize
-        cli._use_ir = old_use_ir
-        cli._dump_opt = old_dump_opt
-        cli._import_paths = old_import_paths
 
     captured = capsys.readouterr()
     assert captured.out.strip() == "55"
@@ -117,7 +93,6 @@ pub main(): Int {
     assert first.err.strip() == ""
     assert second.out.strip() == "55"
     assert second.err.strip() == ""
-    assert cli._use_ir is False
 
 
 def test_cli_does_not_print_success_exit_code(tmp_path, capsys):

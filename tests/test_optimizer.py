@@ -1,7 +1,7 @@
 """Tests for the bytecode optimizer."""
 
-from src.backend.codegen.opcodes import Function, Op, ProgramBytecode
-from src.backend.codegen.optimizer import (
+from suma_lang.backend.codegen.opcodes import Function, Op, ProgramBytecode
+from suma_lang.backend.codegen.optimizer import (
     Optimizer,
     _constant_fold,
     _peephole,
@@ -302,7 +302,7 @@ def test_optimizer_constant_folding_integration():
 
 def test_optimizer_preserves_semantics():
     """Ensure optimized code still produces correct results via VM."""
-    from src.runtime.vm.vm import VM
+    from suma_lang.runtime.vm.vm import VM
 
     # factorial(5) should still be 120 after optimization
     constants = [5, 1, 0]
@@ -401,8 +401,8 @@ def test_optimizer_fuses_var_compare_jump():
 
 
 def test_optimizer_fuses_counting_loop_and_preserves_result():
-    from src.cli import compile_source
-    from src.runtime.vm.vm import VM
+    from suma_lang.cli import compile_source
+    from suma_lang.runtime.vm.vm import VM
 
     source = """
 pub fact(n: Int): Int {
@@ -429,7 +429,7 @@ pub main(): Int {
 
 
 def test_dump_opt_formats_loop_generic_pseudocode():
-    from src.cli import compile_source
+    from suma_lang.cli import compile_source
 
     source = """
 pub sum_to(n: Int): Int {
@@ -456,8 +456,8 @@ pub main(): Int {
 
 
 def test_optimizer_fuses_tail_recursion_and_preserves_result():
-    from src.cli import compile_source
-    from src.runtime.vm.vm import VM
+    from suma_lang.cli import compile_source
+    from suma_lang.runtime.vm.vm import VM
 
     source = """
 pub fact(n: Int, acc: Int): Int {
@@ -480,9 +480,9 @@ pub main(): Int {
 
 
 def test_tail_call_optimization_is_not_function_name_specific():
-    from src.backend.codegen.optimizer import format_program
-    from src.cli import compile_source
-    from src.runtime.vm.vm import VM
+    from suma_lang.backend.codegen.optimizer import format_program
+    from suma_lang.cli import compile_source
+    from suma_lang.runtime.vm.vm import VM
 
     source = """
 pub countdown(value: Int, acc: Int): Int {

@@ -2,6 +2,8 @@
 
 A statically-typed language that compiles to bytecode, runs on a stack-based VM.
 
+📖 **Full documentation:** <https://SumaRoder.github.io/suma-lang/>
+
 ## What It Gives You
 
 - **Static typing** with compile-time checks
@@ -94,7 +96,7 @@ The compiler has four main stages:
 
 **Midend** — Converts the AST to three-address code (TAC), runs constant folding, propagation, dead code elimination.
 
-**Backend** — Generates bytecode, applies peephole optimizations, serializes to `.sumac` files.
+**Backend** — Generates bytecode, applies peephole optimizations, serializes to `.sumac` files. The wire format is specified in [docs/bytecode.md](docs/bytecode.md).
 
 **Runtime** — Stack-based VM executes the bytecode.
 
@@ -106,10 +108,11 @@ The compiler has four main stages:
 
 ```
 src/
-├── frontend/          # Lexer, parser, semantic analysis, imports
-├── mid/               # IR generation and optimization
-├── backend/           # Bytecode generation and serialization
-└── runtime/           # The VM implementation
+└── suma_lang/
+    ├── frontend/      # Lexer, parser, semantic analysis, imports
+    ├── mid/           # IR generation and optimization
+    ├── backend/       # Bytecode generation and serialization
+    └── runtime/       # The VM implementation
 
 stdlib/                # Standard library in Suma
 examples/              # Example programs
@@ -122,6 +125,17 @@ tests/                 # Test suite
 uv run pytest -q
 uv run ruff check .
 uv run pyright
+```
+
+## Building the Docs
+
+The site at <https://SumaRoder.github.io/suma-lang/> is built with MkDocs Material
+and deployed from `.github/workflows/docs.yml`. To preview locally:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve            # http://127.0.0.1:8000
+mkdocs build --strict   # one-off build into ./site
 ```
 
 ## Command Line Options
@@ -178,7 +192,8 @@ Import paths are searched in this order:
 3. Paths from `-I` flag
 4. Current working directory
 5. Project root
-6. `stdlib/` directory
+6. `SUMA_STDLIB_PATHS` entries, searched left to right
+7. Built-in `stdlib/` directory fallback
 
 You can also import Python modules directly:
 
@@ -186,3 +201,6 @@ You can also import Python modules directly:
 import "py:math"
 import "py:numpy as np"
 ```
+
+`SUMA_PATH` and `SUMA_STDLIB_PATHS` both use the platform path separator:
+`:` on Unix-like systems, `;` on Windows.

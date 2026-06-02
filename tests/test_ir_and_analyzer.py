@@ -7,17 +7,23 @@ from io import StringIO
 
 import pytest
 
-from src.backend.codegen.compiler import Compiler
-from src.backend.codegen.serializer import MAGIC, VERSION, _encode_constants, deserialize, serialize
-from src.frontend.lexer.token_types import TokenType
-from src.frontend.lexer.tokenizer import Tokenizer
-from src.frontend.parser.parser import ParseError, Parser
-from src.frontend.semantic.analyzer import Analyzer
-from src.mid.ir.codegen import CodegenError, ir_to_bytecode
-from src.mid.ir.ir import BasicBlock, IRFunction, IRProgram, Label, Return, VirtualReg
-from src.mid.ir.lower import lower_to_ir
-from src.mid.ir.optimizer import optimize_ir
-from src.runtime.vm.vm import VM, SumaCallable, SumaErr
+from suma_lang.backend.codegen.compiler import Compiler
+from suma_lang.backend.codegen.serializer import (
+    MAGIC,
+    VERSION,
+    _encode_constants,
+    deserialize,
+    serialize,
+)
+from suma_lang.frontend.lexer.token_types import TokenType
+from suma_lang.frontend.lexer.tokenizer import Tokenizer
+from suma_lang.frontend.parser.parser import ParseError, Parser
+from suma_lang.frontend.semantic.analyzer import Analyzer
+from suma_lang.mid.ir.codegen import CodegenError, ir_to_bytecode
+from suma_lang.mid.ir.ir import BasicBlock, IRFunction, IRProgram, Label, Return, VirtualReg
+from suma_lang.mid.ir.lower import lower_to_ir
+from suma_lang.mid.ir.optimizer import optimize_ir
+from suma_lang.runtime.vm.vm import VM, SumaCallable, SumaErr
 
 
 def _parse(source: str):
@@ -64,7 +70,7 @@ pub also_broken(: Int {
 """
     try:
         _parse(source)
-        assert False, "expected parse failure"
+        raise AssertionError("expected parse failure")
     except ParseError as exc:
         assert str(exc).count("[ParseError]") >= 2
 
@@ -330,7 +336,7 @@ pub main(): Int {
 }
 """
     program = _program(source, use_ir=True)
-    from src.backend.codegen.optimizer import optimize
+    from suma_lang.backend.codegen.optimizer import optimize
 
     assert VM(optimize(program)).run() == 3
 

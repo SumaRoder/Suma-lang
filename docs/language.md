@@ -405,7 +405,11 @@ Search order:
 3. `-I` / `--import-path` flags
 4. Current directory
 5. Project root
-6. `stdlib/`
+6. `SUMA_STDLIB_PATHS` entries, left to right
+7. Built-in `stdlib/`
+
+`SUMA_PATH` and `SUMA_STDLIB_PATHS` are path lists split with the platform
+separator: `:` on Unix-like systems, `;` on Windows.
 
 The compiler catches circular imports and reports them.
 

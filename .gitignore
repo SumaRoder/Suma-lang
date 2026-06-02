@@ -59,3 +59,6 @@ pyrightconfig.json
 
 .env
 .env.local
+
+# MkDocs build output
+site/

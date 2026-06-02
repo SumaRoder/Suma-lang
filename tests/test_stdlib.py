@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from src.cli import compile_source
-from src.runtime.vm.vm import VM
+from suma_lang.cli import compile_source
+from suma_lang.runtime.vm.vm import VM
 
 
 def _run(source: str):

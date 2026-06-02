@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import main as suma_main
-from src.backend.codegen.opcodes import ProgramBytecode
-from src.backend.codegen.serializer import deserialize, serialize
-from src.cli import CompileSourceError
-from src.runtime.vm.vm import VM
+from suma_lang.backend.codegen.opcodes import ProgramBytecode
+from suma_lang.backend.codegen.serializer import deserialize, serialize
+from suma_lang.cli import CompileOptions, CompileSourceError, compile_source
+from suma_lang.runtime.vm.vm import VM
 
 
 def _compile(source: str, use_ir: bool = False):
-    old_use_ir = suma_main._use_ir
-    try:
-        suma_main._use_ir = use_ir
-        return suma_main.compile_source(source, "<python-import-test>")
-    finally:
-        suma_main._use_ir = old_use_ir
+    return compile_source(
+        source,
+        "<python-import-test>",
+        options=CompileOptions(use_ir=use_ir),
+    )
 
 
 def _run(source: str, use_ir: bool = False):
@@ -104,7 +102,7 @@ pub main(): Int {
 """
     try:
         _compile(source)
-        assert False, "expected py:os to be rejected"
+        raise AssertionError("expected py:os to be rejected")
     except CompileSourceError as exc:
         assert "not allowed" in str(exc)
 
@@ -112,7 +110,7 @@ pub main(): Int {
 def test_python_import_policy_is_enforced_at_vm_load_time():
     try:
         VM(ProgramBytecode(py_imports={"os": "os"}))
-        assert False, "expected VM to reject py:os"
+        raise AssertionError("expected VM to reject py:os")
     except Exception as exc:
         assert "not allowed" in str(exc)
 

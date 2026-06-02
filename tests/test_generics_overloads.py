@@ -1,13 +1,13 @@
 import pytest
 
-from src.backend.codegen.compiler import Compiler
-from src.backend.codegen.serializer import deserialize, serialize
-from src.frontend.lexer.tokenizer import Tokenizer
-from src.frontend.parser.parser import Parser
-from src.frontend.semantic.analyzer import Analyzer
-from src.mid.ir.codegen import ir_to_bytecode
-from src.mid.ir.lower import lower_to_ir
-from src.runtime.vm.vm import VM
+from suma_lang.backend.codegen.compiler import Compiler
+from suma_lang.backend.codegen.serializer import deserialize, serialize
+from suma_lang.frontend.lexer.tokenizer import Tokenizer
+from suma_lang.frontend.parser.parser import Parser
+from suma_lang.frontend.semantic.analyzer import Analyzer
+from suma_lang.mid.ir.codegen import ir_to_bytecode
+from suma_lang.mid.ir.lower import lower_to_ir
+from suma_lang.runtime.vm.vm import VM
 
 
 def _parse(source: str):
