@@ -3,6 +3,10 @@
 A statically-typed language that compiles to bytecode and runs on a stack-based VM,
 implemented in pure Python.
 
+Suma-lang is intentionally aggressive about language design. Its syntax removes
+some keywords and ceremony that SumaRoder considers low-value, favoring compact,
+opinionated forms instead of preserving tradition for its own sake.
+
 ## What you get
 
 - **Static typing** with compile-time checks
@@ -39,9 +43,8 @@ suma compile examples/hello.suma
 suma execute examples/hello.sumac
 ```
 
-The `main(): Int` function is treated as a process-style exit value.
-`0` means success (and is not printed); non-zero returns are echoed to stdout
-for interactive use.
+Suma treats `main(): Int` as a process exit code. The CLI swallows `0` (the
+success case) and echoes any non-zero return for interactive use.
 
 ## How it's built
 
@@ -80,7 +83,6 @@ The compiler has four stages:
 
 ## Project status
 
-Alpha. The language and VM are functional; CLI, embedding API, and bytecode format
-are usable but may shift between minor versions. See the
-[GitHub repository](https://github.com/suma-lang/suma-lang) for source, issues,
-and contributions.
+Alpha. The language and VM work end-to-end. The CLI, embedding API, and bytecode
+format are usable but may shift between minor versions. Source, issues, and
+contributions live in the [GitHub repository](https://github.com/SumaRoder/suma-lang).

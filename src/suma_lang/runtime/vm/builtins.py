@@ -14,6 +14,7 @@ from suma_lang.runtime.vm.errors import VMError
 from suma_lang.runtime.vm.format import _format_value
 from suma_lang.runtime.vm.values import (
     SumaCallable,
+    SumaEnum,
     SumaErr,
     SumaLambda,
     SumaList,
@@ -21,11 +22,12 @@ from suma_lang.runtime.vm.values import (
     SumaOk,
     SumaPyObject,
     SumaRange,
+    SumaTuple,
 )
 
 
 def builtin_print(args: list) -> None:
-    print(_format_value(args[0]))
+    print(*(_format_value(a) for a in args))
     return None
 
 
@@ -35,14 +37,14 @@ def builtin_str(args: list) -> str:
 
 def builtin_int(args: list) -> int:
     val = args[0]
+    if isinstance(val, bool):
+        return 1 if val else 0
     if isinstance(val, int):
         return val
     if isinstance(val, float):
         return int(val)
     if isinstance(val, str):
         return int(val)
-    if isinstance(val, bool):
-        return 1 if val else 0
     raise VMError(f"Cannot convert {type(val)} to Int")
 
 
@@ -101,6 +103,8 @@ def builtin_len(args: list) -> int:
     val = args[0]
     if isinstance(val, SumaList):
         return len(val.items)
+    if isinstance(val, SumaTuple):
+        return len(val.items)
     if isinstance(val, SumaRange):
         return len(val)
     if isinstance(val, str):
@@ -122,12 +126,16 @@ def builtin_typeof(args: list) -> str:
         return "Str"
     if isinstance(val, SumaList):
         return "List"
+    if isinstance(val, SumaTuple):
+        return "Tuple"
     if isinstance(val, SumaRange):
         return "Range"
     if isinstance(val, SumaOk):
         return "R"
     if isinstance(val, SumaErr):
         return "R"
+    if isinstance(val, SumaEnum):
+        return val.enum_name
     if isinstance(val, SumaObject):
         return val.class_name
     if isinstance(val, (SumaCallable, SumaLambda)):

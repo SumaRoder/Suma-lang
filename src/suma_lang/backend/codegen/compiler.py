@@ -17,7 +17,9 @@ from suma_lang.frontend.parser.ast_nodes import (
     ContinueStmt,
     Decorator,
     DestructureAssignStmt,
+    DestructureDeclStmt,
     ElvExpr,
+    EnumDecl,
     ErrExpr,
     Expr,
     ExprStmt,
@@ -39,6 +41,7 @@ from suma_lang.frontend.parser.ast_nodes import (
     NullCoalesceExpr,
     NullLiteral,
     OkExpr,
+    OuterIdentifier,
     Param,
     PatternMatchExpr,
     Program,
@@ -54,10 +57,205 @@ from suma_lang.frontend.parser.ast_nodes import (
     ThisExpr,
     ThrowStmt,
     TryCatchStmt,
+    TupleExpr,
     UnaryExpr,
     VarDecl,
     WhileStmt,
 )
+
+
+def _lambda_free_vars(expr: LambdaExpr, outer_locals: set[str]) -> set[str]:
+    capture_names: set[str] = set()
+
+    class _Analyzer:
+        def __init__(self, available_outer: set[str], initial_bound: set[str]) -> None:
+            self.available_outer = available_outer
+            self._scopes: list[set[str]] = [set(initial_bound)]
+
+        def bound_names(self) -> set[str]:
+            names: set[str] = set()
+            for scope in self._scopes:
+                names.update(scope)
+            return names
+
+        def is_bound(self, name: str) -> bool:
+            return any(name in scope for scope in reversed(self._scopes))
+
+        def push_scope(self) -> None:
+            self._scopes.append(set())
+
+        def pop_scope(self) -> None:
+            self._scopes.pop()
+
+        def bind(self, name: str) -> None:
+            self._scopes[-1].add(name)
+
+        def visit_block(self, block: BlockStmt) -> None:
+            self.push_scope()
+            try:
+                for stmt in block.statements:
+                    self.visit_stmt(stmt)
+            finally:
+                self.pop_scope()
+
+        def visit_stmt(self, stmt: Stmt) -> None:
+            if isinstance(stmt, ExprStmt):
+                self.visit_expr(stmt.expr)
+            elif isinstance(stmt, VarDecl):
+                if stmt.initializer is not None:
+                    self.visit_expr(stmt.initializer)
+                self.bind(stmt.name)
+            elif isinstance(stmt, ReturnStmt):
+                if stmt.value is not None:
+                    self.visit_expr(stmt.value)
+            elif isinstance(stmt, BlockStmt):
+                self.visit_block(stmt)
+            elif isinstance(stmt, IfStmt):
+                self.visit_expr(stmt.condition)
+                self.visit_block(stmt.then_branch)
+                for condition, branch in stmt.elif_branches:
+                    self.visit_expr(condition)
+                    self.visit_block(branch)
+                if stmt.else_branch is not None:
+                    self.visit_block(stmt.else_branch)
+            elif isinstance(stmt, LoopStmt):
+                self.visit_block(stmt.body)
+            elif isinstance(stmt, WhileStmt):
+                self.visit_expr(stmt.condition)
+                self.visit_block(stmt.body)
+            elif isinstance(stmt, ForInStmt):
+                self.visit_expr(stmt.iterable)
+                self.push_scope()
+                try:
+                    self.bind(stmt.var_name)
+                    self.visit_block(stmt.body)
+                finally:
+                    self.pop_scope()
+            elif isinstance(stmt, ThrowStmt):
+                self.visit_expr(stmt.value)
+            elif isinstance(stmt, TryCatchStmt):
+                self.visit_block(stmt.try_body)
+                if stmt.catch_body is not None:
+                    self.push_scope()
+                    try:
+                        if stmt.catch_var is not None:
+                            self.bind(stmt.catch_var)
+                        self.visit_block(stmt.catch_body)
+                    finally:
+                        self.pop_scope()
+                if stmt.finally_body is not None:
+                    self.visit_block(stmt.finally_body)
+            elif isinstance(stmt, DestructureAssignStmt):
+                self.visit_expr(stmt.value)
+                for target in stmt.targets:
+                    self.visit_name(target)
+            elif isinstance(stmt, DestructureDeclStmt):
+                self.visit_expr(stmt.value)
+                for target in stmt.targets:
+                    self.bind(target)
+
+        def visit_name(self, name: str) -> None:
+            if not self.is_bound(name) and name in self.available_outer:
+                capture_names.add(name)
+
+        def visit_expr(self, node: Expr) -> None:
+            if isinstance(node, Identifier):
+                self.visit_name(node.name)
+            elif isinstance(node, ThisExpr):
+                self.visit_name("this")
+            elif isinstance(
+                node, (IntLiteral, FloatLiteral, StrLiteral, BoolLiteral, NullLiteral, ItExpr)
+            ):
+                return
+            elif isinstance(node, UnaryExpr):
+                self.visit_expr(node.operand)
+            elif isinstance(node, BinaryExpr):
+                self.visit_expr(node.left)
+                self.visit_expr(node.right)
+            elif isinstance(node, AssignExpr | CompoundAssignExpr):
+                self.visit_target(node.target)
+                self.visit_expr(node.value)
+            elif isinstance(node, IncrementExpr):
+                self.visit_target(node.target)
+            elif isinstance(node, CallExpr):
+                self.visit_expr(node.callee)
+                for arg in node.args:
+                    self.visit_expr(arg)
+            elif isinstance(node, MemberExpr):
+                self.visit_expr(node.obj)
+            elif isinstance(node, IndexExpr):
+                self.visit_expr(node.obj)
+                self.visit_expr(node.index)
+            elif isinstance(node, SliceExpr):
+                self.visit_expr(node.obj)
+                if node.start is not None:
+                    self.visit_expr(node.start)
+                if node.end is not None:
+                    self.visit_expr(node.end)
+            elif isinstance(node, ListExpr | TupleExpr):
+                for element in node.elements:
+                    self.visit_expr(element)
+            elif isinstance(node, (OkExpr, ErrExpr, PropagateExpr)):
+                self.visit_expr(node.value)
+            elif isinstance(node, LambdaExpr):
+                nested = _Analyzer(
+                    self.available_outer,
+                    {name for name, _ in node.params},
+                )
+                nested.visit_block(
+                    node.body
+                    if isinstance(node.body, BlockStmt)
+                    else BlockStmt(
+                        statements=(ReturnStmt(value=node.body, info=node.info),),
+                        info=node.info,
+                    )
+                )
+            elif isinstance(node, ElvExpr | NullCoalesceExpr):
+                self.visit_expr(node.left)
+                self.visit_expr(node.right)
+            elif isinstance(node, SafeCallExpr):
+                self.visit_expr(node.obj)
+                for arg in node.args:
+                    self.visit_expr(arg)
+            elif isinstance(node, SafeMemberExpr):
+                self.visit_expr(node.obj)
+            elif isinstance(node, PatternMatchExpr):
+                self.visit_expr(node.scrutinee)
+                for arm in node.arms:
+                    if isinstance(arm.pattern.value, Expr):
+                        self.visit_expr(arm.pattern.value)
+                    if isinstance(arm.body, BlockStmt):
+                        self.visit_block(arm.body)
+                    else:
+                        self.visit_expr(arm.body)
+            elif isinstance(node, IfExpr):
+                self.visit_expr(node.condition)
+                self.visit_block(node.then_branch)
+                for condition, branch in node.elif_branches:
+                    self.visit_expr(condition)
+                    self.visit_block(branch)
+                if node.else_branch is not None:
+                    self.visit_block(node.else_branch)
+            elif isinstance(node, RangeExpr):
+                self.visit_expr(node.start)
+                self.visit_expr(node.end)
+
+        def visit_target(self, target: Expr) -> None:
+            if isinstance(target, Identifier):
+                self.visit_name(target.name)
+            elif isinstance(target, MemberExpr):
+                self.visit_expr(target.obj)
+            elif isinstance(target, IndexExpr):
+                self.visit_expr(target.obj)
+                self.visit_expr(target.index)
+
+    analyzer = _Analyzer(outer_locals, {name for name, _ in expr.params})
+    analyzer.visit_block(
+        expr.body
+        if isinstance(expr.body, BlockStmt)
+        else BlockStmt(statements=(ReturnStmt(value=expr.body, info=expr.info),), info=expr.info)
+    )
+    return capture_names
 
 
 class Compiler:
@@ -74,6 +272,7 @@ class Compiler:
         self._decorated_names: set[str] = set()
         self._decorated_classes: set[str] = set()
         self._global_names: set[str] = set()
+        self._enum_variants: dict[str, dict[str, str | None]] = {}
 
     def compile(self, ast: Program) -> ProgramBytecode:
         self.program.py_imports = dict(ast.py_imports)
@@ -93,6 +292,8 @@ class Compiler:
         for decl in ast.declarations:
             if isinstance(decl, FunctionDecl):
                 self._func_overloads.setdefault(decl.name, []).append(decl)
+            elif isinstance(decl, EnumDecl):
+                self._register_enum(decl)
         self._overloaded_names = {
             name for name, funcs in self._func_overloads.items() if len(funcs) > 1
         }
@@ -144,6 +345,7 @@ class Compiler:
                 break
 
         self.program.classes = self._class_info
+        self.program.enums = self._enum_variants
         return self.program
 
     def _const(self, value: object) -> int:
@@ -191,6 +393,11 @@ class Compiler:
             "method_overloads": method_overloads,
             "getters": getters,
             "setters": setters,
+        }
+
+    def _register_enum(self, enum: EnumDecl) -> None:
+        self._enum_variants[enum.name] = {
+            variant.name: variant.payload_type for variant in enum.variants
         }
 
     def _getter_function(self, member: GetterDecl) -> FunctionDecl:
@@ -313,8 +520,10 @@ class Compiler:
             for decl in global_vars:
                 ctx.compile_global_var(decl)
 
+        ctx.push_scope()
         for stmt in func.body.statements:
             ctx.compile_stmt(stmt)
+        ctx.pop_scope()
 
         stmts = func.body.statements
         if not stmts or not isinstance(stmts[-1], ReturnStmt):
@@ -332,8 +541,14 @@ class Compiler:
         self.program.functions.append(fn)
 
         param_names = {pname for pname, _ in lam.params}
-        captured = sorted(ctx.locals.items(), key=lambda item: item[1])
+        free_vars = _lambda_free_vars(lam, set(ctx.locals))
+        captured = [
+            (name, slot)
+            for name, slot in sorted(ctx.locals.items(), key=lambda item: item[1])
+            if name in free_vars
+        ]
         fn.capture_count = len(captured)
+        fn.capture_slots = [slot for _, slot in captured]
 
         lam_ctx = FuncContext(fn, self)
         for name, slot in captured:
@@ -343,8 +558,10 @@ class Compiler:
             lam_ctx.add_local(pname)
 
         if isinstance(lam.body, BlockStmt):
+            lam_ctx.push_scope()
             for stmt in lam.body.statements:
                 lam_ctx.compile_stmt(stmt)
+            lam_ctx.pop_scope()
             lam_ctx.emit(Op.RETURN)
         else:
             lam_ctx.compile_expr(lam.body)
@@ -387,10 +604,15 @@ class FuncContext:
         self.fn = fn
         self.compiler = compiler
         self.locals: dict[str, int] = {}
+        self._scope_names: list[set[str]] = [set()]
+        self._scope_shadows: list[list[tuple[str, int | None]]] = [[]]
+        self._next_local = 0
         self.max_locals = 0
         self._break_targets: list[list[int]] = []  # stack of patch lists
         self._continue_targets: list[list[int]] = []  # stack of patch lists
         self._throw_handlers: list[tuple[int | None, list[int]]] = []
+        self._finally_bodies: list[BlockStmt] = []
+        self._finally_handler_depths: list[int] = []
 
     def emit(self, *args: int) -> int:
         """Emit instruction(s). Returns the index of the first emitted item."""
@@ -409,15 +631,100 @@ class FuncContext:
         self.fn.code[jump_idx] = len(self.fn.code)
 
     def add_local(self, name: str) -> int:
-        if name in self.locals:
+        current_scope = self._scope_names[-1]
+        if name in current_scope:
             return self.locals[name]
-        idx = len(self.locals)
+        previous = self.locals.get(name)
+        self._scope_shadows[-1].append((name, previous))
+        idx = self._next_local
+        self._next_local += 1
         self.locals[name] = idx
+        current_scope.add(name)
         self.max_locals = max(self.max_locals, idx + 1)
         return idx
 
     def get_local(self, name: str) -> int | None:
         return self.locals.get(name)
+
+    def get_current_local(self, name: str) -> int | None:
+        if name not in self._scope_names[-1]:
+            return None
+        return self.locals.get(name)
+
+    def get_outer_local(self, name: str) -> int | None:
+        if name not in self._scope_names[-1]:
+            return self.locals.get(name)
+        for shadow_name, previous in reversed(self._scope_shadows[-1]):
+            if shadow_name == name:
+                return previous
+        return None
+
+    def compile_block(self, block: BlockStmt) -> None:
+        self.push_scope()
+        try:
+            for stmt in block.statements:
+                self.compile_stmt(stmt)
+        finally:
+            self.pop_scope()
+
+    def reserve_local(self) -> int:
+        idx = self._next_local
+        self._next_local += 1
+        self.max_locals = max(self.max_locals, idx + 1)
+        return idx
+
+    def bind_local(self, name: str, slot: int) -> int:
+        current_scope = self._scope_names[-1]
+        if name in current_scope:
+            return self.locals[name]
+        previous = self.locals.get(name)
+        self._scope_shadows[-1].append((name, previous))
+        self.locals[name] = slot
+        current_scope.add(name)
+        self.max_locals = max(self.max_locals, slot + 1)
+        return slot
+
+    def push_scope(self) -> None:
+        self._scope_names.append(set())
+        self._scope_shadows.append([])
+
+    def pop_scope(self) -> None:
+        if len(self._scope_names) == 1:
+            return
+        for name, previous in reversed(self._scope_shadows.pop()):
+            if previous is None:
+                self.locals.pop(name, None)
+            else:
+                self.locals[name] = previous
+        self._scope_names.pop()
+
+    def _compile_active_finally(self) -> None:
+        saved_bodies = self._finally_bodies
+        saved_depths = self._finally_handler_depths
+        saved_handlers = self._throw_handlers
+        try:
+            for index in range(len(saved_bodies) - 1, -1, -1):
+                body = saved_bodies[index]
+                self._finally_bodies = saved_bodies[:index]
+                self._finally_handler_depths = saved_depths[:index]
+                self._throw_handlers = saved_handlers[: saved_depths[index]]
+                self.compile_block(body)
+        finally:
+            self._finally_bodies = saved_bodies
+            self._finally_handler_depths = saved_depths
+            self._throw_handlers = saved_handlers
+
+    def _emit_pending_throw(self, value_slot: int) -> None:
+        self.emit(Op.LOAD_VAR, value_slot)
+        if self._throw_handlers:
+            catch_slot, jumps = self._throw_handlers[-1]
+            if catch_slot is not None:
+                self.emit(Op.STORE_VAR, catch_slot)
+            self.emit(Op.POP)
+            jumps.append(self.emit_jump(Op.JUMP))
+            return
+        self.emit(Op.MAKE_ERR)
+        self.emit(Op.RETURN)
 
     def compile_stmt(self, stmt: Stmt) -> None:
         if isinstance(stmt, ExprStmt):
@@ -435,10 +742,18 @@ class FuncContext:
                 self.compile_expr(stmt.value)
             else:
                 self.emit(Op.LOAD_NULL)
+            if self._finally_bodies:
+                return_slot = self.add_local(f"__finally_return_{len(self.locals)}")
+                self.emit(Op.STORE_VAR, return_slot)
+                self.emit(Op.POP)
+                self._compile_active_finally()
+                self.emit(Op.LOAD_VAR, return_slot)
             self.emit(Op.RETURN)
         elif isinstance(stmt, BlockStmt):
+            self.push_scope()
             for s in stmt.statements:
                 self.compile_stmt(s)
+            self.pop_scope()
         elif isinstance(stmt, IfStmt):
             self._compile_if(stmt)
         elif isinstance(stmt, LoopStmt):
@@ -450,11 +765,13 @@ class FuncContext:
         elif isinstance(stmt, BreakStmt):
             if not self._break_targets:
                 raise CompileError("'break' outside of loop")
+            self._compile_active_finally()
             self.emit(Op.JUMP, 0)
             self._break_targets[-1].append(len(self.fn.code) - 1)
         elif isinstance(stmt, ContinueStmt):
             if not self._continue_targets:
                 raise CompileError("'continue' outside of loop")
+            self._compile_active_finally()
             self.emit(Op.JUMP, 0)
             self._continue_targets[-1].append(len(self.fn.code) - 1)
         elif isinstance(stmt, ThrowStmt):
@@ -473,6 +790,8 @@ class FuncContext:
             self._compile_try_catch(stmt)
         elif isinstance(stmt, DestructureAssignStmt):
             self._compile_destructure_assignment(stmt)
+        elif isinstance(stmt, DestructureDeclStmt):
+            self._compile_destructure_declaration(stmt)
 
     def compile_global_var(self, stmt: VarDecl) -> None:
         if not stmt.initializer:
@@ -493,36 +812,45 @@ class FuncContext:
             self._store_identifier(target)
             self.emit(Op.POP)
 
+    def _compile_destructure_declaration(self, stmt: DestructureDeclStmt) -> None:
+        value_slot = self.add_local(f"__destructure_value_{len(self.locals)}")
+        self.compile_expr(stmt.value)
+        self.emit(Op.STORE_VAR, value_slot)
+        self.emit(Op.POP)
+        for index, target in enumerate(stmt.targets):
+            self.emit(Op.LOAD_VAR, value_slot)
+            self.emit(Op.LOAD_CONST, self.compiler._const(index))
+            self.emit(Op.INDEX)
+            target_slot = self.add_local(target)
+            self.emit(Op.STORE_VAR, target_slot)
+            self.emit(Op.POP)
+
     def _store_identifier(self, name: str) -> None:
-        slot = self.get_local(name)
+        slot = self.get_current_local(name)
         if slot is not None:
             self.emit(Op.STORE_VAR, slot)
-        elif name in self.compiler._global_names:
-            self.emit(Op.STORE_GLOBAL, self.compiler._string_const(name))
         else:
-            self.emit(Op.STORE_VAR, self.add_local(name))
+            slot = self.add_local(name)
+            self.emit(Op.STORE_VAR, slot)
 
     def _compile_if(self, stmt: IfStmt) -> None:
         self.compile_expr(stmt.condition)
         end_jumps = []
 
         false_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-        for s in stmt.then_branch.statements:
-            self.compile_stmt(s)
+        self.compile_block(stmt.then_branch)
         end_jumps.append(self.emit_jump(Op.JUMP))
         self.patch_jump(false_jump)
 
         for elif_cond, elif_body in stmt.elif_branches:
             self.compile_expr(elif_cond)
             false_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-            for s in elif_body.statements:
-                self.compile_stmt(s)
+            self.compile_block(elif_body)
             end_jumps.append(self.emit_jump(Op.JUMP))
             self.patch_jump(false_jump)
 
         if stmt.else_branch:
-            for s in stmt.else_branch.statements:
-                self.compile_stmt(s)
+            self.compile_block(stmt.else_branch)
 
         for idx in end_jumps:
             self.patch_jump(idx)
@@ -532,8 +860,7 @@ class FuncContext:
         self._break_targets.append([])
         self._continue_targets.append([])
 
-        for s in stmt.body.statements:
-            self.compile_stmt(s)
+        self.compile_block(stmt.body)
 
         self.emit(Op.JUMP, loop_start)
 
@@ -550,8 +877,7 @@ class FuncContext:
 
         self.compile_expr(stmt.condition)
         false_jump = self.emit_jump(Op.JUMP_IF_FALSE)
-        for s in stmt.body.statements:
-            self.compile_stmt(s)
+        self.compile_block(stmt.body)
 
         for cont_idx in self._continue_targets.pop():
             self.fn.code[cont_idx] = loop_start
@@ -562,6 +888,10 @@ class FuncContext:
             self.patch_jump(break_idx)
 
     def _compile_for_in(self, stmt: ForInStmt) -> None:
+        if isinstance(stmt.iterable, RangeExpr):
+            self._compile_for_range(stmt, stmt.iterable)
+            return
+        self.push_scope()
         iter_slot = self.add_local(f"__for_iter_{len(self.locals)}")
         index_slot = self.add_local(f"__for_index_{len(self.locals)}")
         item_slot = self.add_local(stmt.var_name)
@@ -588,8 +918,7 @@ class FuncContext:
         self.emit(Op.INDEX)
         self.emit(Op.STORE_VAR, item_slot)
         self.emit(Op.POP)
-        for s in stmt.body.statements:
-            self.compile_stmt(s)
+        self.compile_block(stmt.body)
 
         increment_start = len(self.fn.code)
         self.emit(Op.LOAD_VAR, index_slot)
@@ -604,26 +933,71 @@ class FuncContext:
         self.patch_jump(false_jump)
         for break_idx in self._break_targets.pop():
             self.patch_jump(break_idx)
+        self.pop_scope()
+
+    def _compile_for_range(self, stmt: ForInStmt, range_expr: RangeExpr) -> None:
+        self.push_scope()
+        index_slot = self.add_local(f"__for_index_{len(self.locals)}")
+        end_slot = self.add_local(f"__for_end_{len(self.locals)}")
+        item_slot = self.add_local(stmt.var_name)
+
+        self.compile_expr(range_expr.start)
+        self.emit(Op.STORE_VAR, index_slot)
+        self.emit(Op.POP)
+        self.compile_expr(range_expr.end)
+        self.emit(Op.STORE_VAR, end_slot)
+        self.emit(Op.POP)
+
+        loop_start = len(self.fn.code)
+        self._break_targets.append([])
+        self._continue_targets.append([])
+
+        self.emit(Op.LOAD_VAR, index_slot)
+        self.emit(Op.LOAD_VAR, end_slot)
+        self.emit(Op.LE if range_expr.inclusive else Op.LT)
+        false_jump = self.emit_jump(Op.JUMP_IF_FALSE)
+
+        self.emit(Op.LOAD_VAR, index_slot)
+        self.emit(Op.STORE_VAR, item_slot)
+        self.emit(Op.POP)
+        self.compile_block(stmt.body)
+
+        increment_start = len(self.fn.code)
+        self.emit(Op.LOAD_VAR, index_slot)
+        self.emit(Op.LOAD_CONST, self.compiler._const(1))
+        self.emit(Op.ADD)
+        self.emit(Op.STORE_VAR, index_slot)
+        self.emit(Op.POP)
+        self.emit(Op.JUMP, loop_start)
+
+        for cont_idx in self._continue_targets.pop():
+            self.fn.code[cont_idx] = increment_start
+        self.patch_jump(false_jump)
+        for break_idx in self._break_targets.pop():
+            self.patch_jump(break_idx)
+        self.pop_scope()
 
     def _compile_try_catch(self, stmt: TryCatchStmt) -> None:
         if stmt.finally_body:
             self._compile_try_catch_with_finally(stmt)
             return
 
-        catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
+        catch_slot = self.reserve_local() if stmt.catch_body and stmt.catch_var else None
         throw_jumps: list[int] = []
         if stmt.catch_body:
             self._throw_handlers.append((catch_slot, throw_jumps))
-        for s in stmt.try_body.statements:
-            self.compile_stmt(s)
+        self.compile_block(stmt.try_body)
         if stmt.catch_body:
             self._throw_handlers.pop()
         skip_catch = self.emit_jump(Op.JUMP) if stmt.catch_body else None
         for jump in throw_jumps:
             self.patch_jump(jump)
         if stmt.catch_body:
-            for s in stmt.catch_body.statements:
-                self.compile_stmt(s)
+            self.push_scope()
+            if stmt.catch_var and catch_slot is not None:
+                self.bind_local(stmt.catch_var, catch_slot)
+            self.compile_block(stmt.catch_body)
+            self.pop_scope()
         if skip_catch is not None:
             self.patch_jump(skip_catch)
 
@@ -632,14 +1006,19 @@ class FuncContext:
         if finally_body is None:
             return
         pending_throw_slot = self.add_local(f"__finally_throw_{len(self.locals)}")
-        catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
+        catch_slot = self.reserve_local() if stmt.catch_body and stmt.catch_var else None
         try_throw_jumps: list[int] = []
         handler_slot = catch_slot if stmt.catch_body else pending_throw_slot
 
+        self._finally_handler_depths.append(len(self._throw_handlers))
         self._throw_handlers.append((handler_slot, try_throw_jumps))
-        for s in stmt.try_body.statements:
-            self.compile_stmt(s)
-        self._throw_handlers.pop()
+        self._finally_bodies.append(finally_body)
+        try:
+            self.compile_block(stmt.try_body)
+        finally:
+            self._finally_bodies.pop()
+            self._finally_handler_depths.pop()
+            self._throw_handlers.pop()
 
         normal_jump = self.emit_jump(Op.JUMP)
         for jump in try_throw_jumps:
@@ -649,25 +1028,30 @@ class FuncContext:
         catch_throw_jumps: list[int] = []
         catch_body = stmt.catch_body
         if catch_body is not None:
+            self._finally_handler_depths.append(len(self._throw_handlers))
             self._throw_handlers.append((pending_throw_slot, catch_throw_jumps))
-            for s in catch_body.statements:
-                self.compile_stmt(s)
-            self._throw_handlers.pop()
+            self._finally_bodies.append(finally_body)
+            try:
+                self.push_scope()
+                if stmt.catch_var and catch_slot is not None:
+                    self.bind_local(stmt.catch_var, catch_slot)
+                self.compile_block(catch_body)
+                self.pop_scope()
+            finally:
+                self._finally_bodies.pop()
+                self._finally_handler_depths.pop()
+                self._throw_handlers.pop()
             catch_normal_jump = self.emit_jump(Op.JUMP)
             for jump in catch_throw_jumps:
                 self.patch_jump(jump)
 
-        for s in finally_body.statements:
-            self.compile_stmt(s)
-        self.emit(Op.LOAD_VAR, pending_throw_slot)
-        self.emit(Op.MAKE_ERR)
-        self.emit(Op.RETURN)
+        self.compile_block(finally_body)
+        self._emit_pending_throw(pending_throw_slot)
 
         self.patch_jump(normal_jump)
         if catch_normal_jump is not None:
             self.patch_jump(catch_normal_jump)
-        for s in finally_body.statements:
-            self.compile_stmt(s)
+        self.compile_block(finally_body)
 
     def compile_expr(self, expr: Expr) -> None:
         if isinstance(expr, (IntLiteral, FloatLiteral)):
@@ -684,6 +1068,14 @@ class FuncContext:
                 self.emit(Op.LOAD_VAR, slot)
             else:
                 self.emit(Op.LOAD_GLOBAL, self.compiler._string_const(expr.name))
+        elif isinstance(expr, OuterIdentifier):
+            slot = self.get_outer_local(expr.name)
+            if slot is not None:
+                self.emit(Op.LOAD_VAR, slot)
+            elif expr.name in self.compiler._global_names:
+                self.emit(Op.LOAD_GLOBAL, self.compiler._string_const(expr.name))
+            else:
+                raise CompileError(f"Cannot access undefined outer name '{expr.name}'")
         elif isinstance(expr, ThisExpr):
             slot = self.get_local("this")
             if slot is not None and not self.fn.is_method:
@@ -704,7 +1096,16 @@ class FuncContext:
             self._compile_binary(expr)
         elif isinstance(expr, AssignExpr):
             if isinstance(expr.target, Identifier):
-                slot = self.get_local(expr.target.name)
+                slot = self.get_current_local(expr.target.name)
+                if slot is not None:
+                    self.compile_expr(expr.value)
+                    self.emit(Op.STORE_VAR, slot)
+                else:
+                    self.compile_expr(expr.value)
+                    slot = self.add_local(expr.target.name)
+                    self.emit(Op.STORE_VAR, slot)
+            elif isinstance(expr.target, OuterIdentifier):
+                slot = self.get_outer_local(expr.target.name)
                 if slot is not None:
                     self.compile_expr(expr.value)
                     self.emit(Op.STORE_VAR, slot)
@@ -713,9 +1114,9 @@ class FuncContext:
                     self.compile_expr(expr.value)
                     self.emit(Op.STORE_GLOBAL, name_idx)
                 else:
-                    self.compile_expr(expr.value)
-                    slot = self.add_local(expr.target.name)
-                    self.emit(Op.STORE_VAR, slot)
+                    raise CompileError(
+                        f"Cannot assign to undefined outer name '{expr.target.name}'"
+                    )
             elif isinstance(expr.target, MemberExpr):
                 self.compile_expr(expr.target.obj)
                 self.compile_expr(expr.value)
@@ -739,8 +1140,15 @@ class FuncContext:
         elif isinstance(expr, CallExpr):
             self._compile_call(expr)
         elif isinstance(expr, MemberExpr):
-            self.compile_expr(expr.obj)
-            self.emit(Op.MEMBER, self.compiler._string_const(expr.member))
+            tag = self._enum_variant_tag(expr)
+            if tag is not None:
+                expected = self._enum_variant_arity(tag)
+                if expected != 0:
+                    raise CompileError(f"Enum variant '{tag}' expects {expected} payload argument")
+                self.emit(Op.MAKE_ENUM, self.compiler._string_const(tag), 0)
+            else:
+                self.compile_expr(expr.obj)
+                self.emit(Op.MEMBER, self.compiler._string_const(expr.member))
         elif isinstance(expr, IndexExpr):
             self.compile_expr(expr.obj)
             self.compile_expr(expr.index)
@@ -759,6 +1167,10 @@ class FuncContext:
             for elem in expr.elements:
                 self.compile_expr(elem)
             self.emit(Op.MAKE_LIST, len(expr.elements))
+        elif isinstance(expr, TupleExpr):
+            for elem in expr.elements:
+                self.compile_expr(elem)
+            self.emit(Op.MAKE_TUPLE, len(expr.elements))
         elif isinstance(expr, OkExpr):
             self.compile_expr(expr.value)
             self.emit(Op.MAKE_OK)
@@ -967,13 +1379,28 @@ class FuncContext:
     def _compile_compound_assign(self, expr: CompoundAssignExpr) -> None:
         op_map = {"+=": Op.ADD, "-=": Op.SUB, "*=": Op.MUL, "/=": Op.DIV, "%=": Op.MOD}
         if isinstance(expr.target, Identifier):
-            slot = self.get_local(expr.target.name)
+            slot = self.get_current_local(expr.target.name)
             if slot is not None:
                 self.emit(Op.LOAD_VAR, slot)
                 self.compile_expr(expr.value)
                 self.emit(op_map[expr.op])
                 self.emit(Op.STORE_VAR, slot)
             else:
+                raise CompileError(
+                    f"Cannot compound-assign '{expr.target.name}' outside the current scope"
+                )
+        elif isinstance(expr.target, OuterIdentifier):
+            slot = self.get_outer_local(expr.target.name)
+            if slot is not None:
+                self.emit(Op.LOAD_VAR, slot)
+                self.compile_expr(expr.value)
+                self.emit(op_map[expr.op])
+                self.emit(Op.STORE_VAR, slot)
+            else:
+                if expr.target.name not in self.compiler._global_names:
+                    raise CompileError(
+                        f"Cannot assign to undefined outer name '{expr.target.name}'"
+                    )
                 name_idx = self.compiler._string_const(expr.target.name)
                 self.emit(Op.LOAD_GLOBAL, name_idx)
                 self.compile_expr(expr.value)
@@ -1009,6 +1436,19 @@ class FuncContext:
             self.emit(Op.SET_INDEX)
 
     def _compile_call(self, expr: CallExpr) -> None:
+        if isinstance(expr.callee, MemberExpr):
+            tag = self._enum_variant_tag(expr.callee)
+            if tag is not None:
+                expected = self._enum_variant_arity(tag)
+                if len(expr.args) != expected:
+                    raise CompileError(
+                        f"Enum variant '{tag}' expects {expected} args, got {len(expr.args)}"
+                    )
+                for arg in expr.args:
+                    self.compile_expr(arg)
+                self.emit(Op.MAKE_ENUM, self.compiler._string_const(tag), len(expr.args))
+                return
+
         if isinstance(expr.callee, Identifier) and expr.callee.name in self.compiler._class_info:
             init = self.compiler._class_init_decls.get(expr.callee.name)
             if expr.callee.name in self.compiler._decorated_classes:
@@ -1090,6 +1530,9 @@ class FuncContext:
                 self.emit(Op.LOAD_VAR, scrutinee_slot)
                 self.emit(Op.LOAD_CONST, self.compiler._string_const(str(pattern.value)))
                 self.emit(Op.CALL, 2)
+            elif pattern.kind == "enum":
+                self.emit(Op.LOAD_VAR, scrutinee_slot)
+                self.emit(Op.IS_ENUM_VARIANT, self.compiler._string_const(str(pattern.value)))
             elif pattern.kind == "literal":
                 self.emit(Op.LOAD_VAR, scrutinee_slot)
                 self._compile_match_literal(pattern.value)  # type: ignore[arg-type]
@@ -1099,7 +1542,7 @@ class FuncContext:
                 pred_slot = self.add_local(f"__match_pred_{len(self.locals)}")
                 self.emit(Op.STORE_VAR, pred_slot)
                 self.emit(Op.POP)
-                if pattern.kind == "result":
+                if pattern.kind in ("result", "enum"):
                     self.emit(Op.POP)
                 self.emit(Op.LOAD_VAR, pred_slot)
                 false_jump = self.emit_jump(Op.JUMP_IF_FALSE)
@@ -1108,14 +1551,30 @@ class FuncContext:
                 self.emit(Op.LOAD_VAR, scrutinee_slot)
                 self.emit(Op.MEMBER, self.compiler._string_const("value"))
                 self.emit(Op.SET_IT)
+            elif pattern.kind == "enum":
+                if self._enum_variant_arity(str(pattern.value)) > 0:
+                    self.emit(Op.LOAD_VAR, scrutinee_slot)
+                    self.emit(Op.MEMBER, self.compiler._string_const("value"))
+                else:
+                    self.emit(Op.LOAD_VAR, scrutinee_slot)
+                self.emit(Op.SET_IT)
             elif pattern.kind in ("type", "literal", "wildcard"):
                 self.emit(Op.LOAD_VAR, scrutinee_slot)
                 self.emit(Op.SET_IT)
 
+            binding_scope = arm.binding is not None and arm.binding != "it"
+            if binding_scope:
+                self.push_scope()
+                self.emit(Op.LOAD_IT)
+                binding_slot = self.add_local(arm.binding or "it")
+                self.emit(Op.STORE_VAR, binding_slot)
+                self.emit(Op.POP)
             if isinstance(arm.body, BlockStmt):
                 self._compile_block_value(arm.body)
             else:
                 self.compile_expr(arm.body)
+            if binding_scope:
+                self.pop_scope()
 
             self.emit(Op.STORE_VAR, result_slot)
             self.emit(Op.POP)
@@ -1170,15 +1629,19 @@ class FuncContext:
         self.emit(Op.LOAD_VAR, result_slot)
 
     def _compile_block_value(self, block: BlockStmt) -> None:
+        self.push_scope()
         statements = list(block.statements)
-        if statements and isinstance(statements[-1], ExprStmt):
-            for stmt in statements[:-1]:
+        try:
+            if statements and isinstance(statements[-1], ExprStmt):
+                for stmt in statements[:-1]:
+                    self.compile_stmt(stmt)
+                self.compile_expr(statements[-1].expr)
+                return
+            for stmt in statements:
                 self.compile_stmt(stmt)
-            self.compile_expr(statements[-1].expr)
-            return
-        for stmt in statements:
-            self.compile_stmt(stmt)
-        self.emit(Op.LOAD_NULL)
+            self.emit(Op.LOAD_NULL)
+        finally:
+            self.pop_scope()
 
     def _compile_match_literal(self, pattern: Expr) -> None:
         if isinstance(pattern, (IntLiteral, FloatLiteral, StrLiteral, BoolLiteral, NullLiteral)):
@@ -1187,6 +1650,21 @@ class FuncContext:
             self.emit(Op.LOAD_CONST, self.compiler._string_const(pattern.name))
         else:
             self.compile_expr(pattern)
+
+    def _enum_variant_tag(self, member: MemberExpr) -> str | None:
+        if not isinstance(member.obj, Identifier):
+            return None
+        if self.get_local(member.obj.name) is not None:
+            return None
+        variants = self.compiler._enum_variants.get(member.obj.name)
+        if variants is None or member.member not in variants:
+            return None
+        return f"{member.obj.name}.{member.member}"
+
+    def _enum_variant_arity(self, tag: str) -> int:
+        enum_name, variant_name = tag.split(".", 1)
+        payload_type = self.compiler._enum_variants.get(enum_name, {}).get(variant_name)
+        return 1 if payload_type is not None else 0
 
 
 class CompileError(Exception):

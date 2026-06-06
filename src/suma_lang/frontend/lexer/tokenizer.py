@@ -26,7 +26,8 @@ class Tokenizer:
         "const": TokenType.CONST,
         "static": TokenType.STATIC,
         "is": TokenType.IS,
-        "class": TokenType.CLASS,
+        "enum": TokenType.ENUM,
+        "match": TokenType.MATCH,
         "try": TokenType.TRY,
         "catch": TokenType.CATCH,
         "finally": TokenType.FINALLY,
@@ -113,7 +114,11 @@ class Tokenizer:
             if Tokenizer._is_identifier_part(cs.peek()) or hex_digits == 0:
                 while Tokenizer._is_identifier_part(cs.peek()):
                     raw.append(cs.next())
-                return (TokenType.ID, "".join(raw))
+                ErrorHandler.report(
+                    info=info,
+                    reason="Invalid numeric literal suffix",
+                    source_line=cs.get_source_line(info.line),
+                )
             return (TokenType.INT, "".join(normalized))
 
         while cs.peek().isdigit() or cs.peek() == "_":
@@ -127,7 +132,11 @@ class Tokenizer:
         if Tokenizer._is_identifier_part(cs.peek()):
             while Tokenizer._is_identifier_part(cs.peek()):
                 raw.append(cs.next())
-            return (TokenType.ID, "".join(raw))
+            ErrorHandler.report(
+                info=info,
+                reason="Invalid numeric literal suffix",
+                source_line=cs.get_source_line(info.line),
+            )
 
         is_float = False
         if cs.peek() == "." and cs.peek_at(1) != ".":
@@ -193,6 +202,9 @@ class Tokenizer:
                 if cs.peek() == "=":
                     cs.next()
                     Tokenizer._add_token(token_list, TokenType.EQ, info, "==")
+                elif cs.peek() == ">":
+                    cs.next()
+                    Tokenizer._add_token(token_list, TokenType.FAT_ARROW, info, "=>")
                 else:
                     Tokenizer._add_token(token_list, TokenType.ASSIGN, info, "=")
             case "*":
@@ -302,6 +314,12 @@ class Tokenizer:
                 elif cur == "/" and cs.peek() == "*":
                     cs.next()
                     cnt += 1
+            if cnt > 0:
+                ErrorHandler.report(
+                    info=info,
+                    reason="Unterminated block comment",
+                    source_line=cs.get_source_line(info.line),
+                )
         else:
             Tokenizer._add_token(token_list, TokenType.DIV, info, "/")
 
@@ -327,7 +345,7 @@ class Tokenizer:
             elif c in "rR" and cs.peek() in "\"'":
                 quote = cs.next()
                 content = Tokenizer._read_string_after_open_quote(cs, info, quote, raw=True)
-                Tokenizer._add_token(token_list, TokenType.STRING, info, content)
+                Tokenizer._add_token(token_list, TokenType.RAW_STRING, info, content)
             elif c.isalpha() or c == "_":
                 lex = Tokenizer._read_identifier(cs, c)
                 ttype = Tokenizer._KEYWORD_MAP.get(lex, TokenType.ID)

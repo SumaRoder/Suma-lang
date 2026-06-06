@@ -8,7 +8,7 @@ import struct
 from suma_lang.backend.codegen.opcodes import Function, ProgramBytecode
 
 MAGIC = b"SUMA"
-VERSION = 8
+VERSION = 11
 
 
 class BytecodeFormatError(ValueError):
@@ -72,6 +72,11 @@ def serialize(prog: ProgramBytecode) -> bytes:
     parts.append(struct.pack("<I", len(class_json)))
     parts.append(class_json)
 
+    # Enums info (JSON)
+    enum_json = json.dumps(prog.enums).encode("utf-8")
+    parts.append(struct.pack("<I", len(enum_json)))
+    parts.append(enum_json)
+
     # Python imports info (JSON)
     py_import_json = json.dumps(prog.py_imports).encode("utf-8")
     parts.append(struct.pack("<I", len(py_import_json)))
@@ -111,8 +116,10 @@ def deserialize(data: bytes) -> ProgramBytecode:
         raise BytecodeFormatError("Invalid .sumac file: bad magic")
 
     version = reader.read_u32()
-    if version not in (1, 2, 3, 4, 5, 6, 7, VERSION):
-        raise BytecodeFormatError(f"Unsupported .sumac version: {version}")
+    if version != VERSION:
+        raise BytecodeFormatError(
+            f"Unsupported .sumac version: {version}; expected {VERSION}. Recompile the source."
+        )
 
     entry = reader.read_u32()
 
@@ -123,6 +130,11 @@ def deserialize(data: bytes) -> ProgramBytecode:
     # Classes
     class_len = reader.read_u32()
     classes = json.loads(reader.read(class_len).decode("utf-8"))
+
+    enums = {}
+    if version >= 10:
+        enum_len = reader.read_u32()
+        enums = json.loads(reader.read(enum_len).decode("utf-8"))
 
     # Python imports
     py_imports = {}
@@ -159,6 +171,7 @@ def deserialize(data: bytes) -> ProgramBytecode:
         functions=functions,
         constants=constants,
         classes=classes,
+        enums=enums,
         py_imports=py_imports,
         decorators=decorators,
         method_decorators=method_decorators,
@@ -232,7 +245,11 @@ def _encode_function(fn: Function) -> bytes:
     parts.append(cn_bytes)
 
     signature_json = json.dumps(
-        {"param_types": fn.param_types, "type_params": fn.type_params}
+        {
+            "param_types": fn.param_types,
+            "type_params": fn.type_params,
+            "capture_slots": fn.capture_slots,
+        }
     ).encode("utf-8")
     parts.append(struct.pack("<I", len(signature_json)))
     parts.append(signature_json)
@@ -264,11 +281,14 @@ def _decode_function(data: bytes, version: int = VERSION) -> Function:
 
     param_types = []
     type_params = []
+    capture_slots = list(range(capture_count))
     if version >= 8:
         signature_len = reader.read_u32()
         signature = json.loads(reader.read(signature_len).decode("utf-8"))
         param_types = signature.get("param_types", [])
         type_params = signature.get("type_params", [])
+        if version >= 9:
+            capture_slots = signature.get("capture_slots", capture_slots)
 
     code_count = reader.read_u32()
     code = list(struct.unpack(f"<{code_count}i", reader.read(code_count * 4)))
@@ -284,6 +304,7 @@ def _decode_function(data: bytes, version: int = VERSION) -> Function:
         is_method=is_method,
         class_name=class_name,
         capture_count=capture_count,
+        capture_slots=capture_slots,
         param_types=param_types,
         type_params=type_params,
     )

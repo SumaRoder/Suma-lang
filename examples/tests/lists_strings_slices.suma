@@ -3,8 +3,8 @@ pub list_total(values: List): Int {
     i: Int = 0
     loop {
         if (i >= values.size) { break }
-        total += values[i]
-        i += 1
+        @total += values[i]
+        @i += 1
     }
     return total
 }

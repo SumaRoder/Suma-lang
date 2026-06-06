@@ -10,23 +10,24 @@ def _run(source: str):
 
 def test_core_repeat_and_validation_helpers():
     source = """
+
 import "core"
 
 pub main(): Int {
     score = 0
     if (repeat_str("ha", 0) != "") { return 0 }
     if (repeat_str("ha", 3) != "hahaha") { return 0 }
-    require_positive(0) -> {
-        Ok = score = 1000
-        Err = score = score + 1
+    match require_positive(0) {
+        Ok => score = 1000
+        Err => score = score + 1
     }
-    require_positive(-1) -> {
-        Ok = score = 1000
-        Err = score = score + 1
+    match require_positive(-1) {
+        Ok => score = 1000
+        Err => score = score + 1
     }
-    require_positive(2) -> {
-        Ok = score = score + it
-        Err = score = 1000
+    match require_positive(2) {
+        Ok => score = score + it
+        Err => score = 1000
     }
     if (score != 4) { return 0 }
     return 42

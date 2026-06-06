@@ -5,11 +5,22 @@ import tempfile
 from pathlib import Path
 
 from main import CompileSourceError, compile_source
+from suma_lang.api import CompileOptions
 from suma_lang.runtime.vm.vm import VM
 
 
 def _run(source: str, filename: str, import_paths: list[str] | None = None):
     program = compile_source(source, filename, import_paths=import_paths)
+    return VM(program).run()
+
+
+def _run_with_ir(source: str, filename: str, import_paths: list[str] | None = None):
+    program = compile_source(
+        source,
+        filename,
+        import_paths=import_paths,
+        options=CompileOptions(use_ir=True),
+    )
     return VM(program).run()
 
 
@@ -141,6 +152,74 @@ pub main(): Int {
 }
         """
         assert _run(source, str(root / "main.suma")) == 42
+
+
+def test_import_only_exposes_public_top_level_names_direct_and_ir():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "service.suma").write_text("""
+helper(): Int {
+    return 40
+}
+
+pri secret(): Int {
+    return 1
+}
+
+pub answer(): Int {
+    return helper() + secret() + 1
+}
+""")
+        source = """
+import "./service.suma"
+
+pub main(): Int {
+    return answer()
+}
+"""
+        assert _run(source, str(root / "main.suma")) == 42
+        assert _run_with_ir(source, str(root / "main.suma")) == 42
+
+
+def test_imported_private_top_level_names_are_not_visible_to_importer():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "service.suma").write_text("""
+helper(): Int {
+    return 42
+}
+
+pub answer(): Int {
+    return helper()
+}
+""")
+        source = """
+import "./service.suma"
+
+pub main(): Int {
+    return helper()
+}
+"""
+        try:
+            _run(source, str(root / "main.suma"))
+            raise AssertionError("expected private import failure")
+        except CompileSourceError as exc:
+            assert "Undefined name 'helper'" in str(exc)
+
+
+def test_import_visibility_modifiers_are_rejected():
+    source = """
+pub import "core"
+
+pub main(): Int {
+    return 42
+}
+"""
+    try:
+        _run(source, "<stdin>")
+        raise AssertionError("expected import visibility parse failure")
+    except CompileSourceError as exc:
+        assert "import declarations cannot be marked pub or pri" in str(exc)
 
 
 def test_missing_import_reports_candidates():

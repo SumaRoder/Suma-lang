@@ -2,13 +2,19 @@
 
 A statically-typed language that compiles to bytecode, runs on a stack-based VM.
 
+Suma-lang is an intentionally aggressive language with an aggressive syntax
+design. It cuts keywords and ceremony that SumaRoder considers low-value, so the
+language favors compact, opinionated syntax over copying the shape of older
+mainstream languages.
+
 📖 **Full documentation:** <https://SumaRoder.github.io/suma-lang/>
 
 ## What It Gives You
 
 - **Static typing** with compile-time checks
 - **Result types** for explicit error handling (`Ok` / `Err`)
-- **Pattern matching** for Results, types, and literal values: `value -> { ... }`
+- **Pattern matching** for Results, enums, types, and literal values: `match value { ... }`
+- **Enums** with payload variants for closed sum types
 - **First-class functions** with closures
 - **Classes** with access control (`pub`/`pri`), getters and setters
 - **Bytecode compiler** with multi-pass optimization
@@ -48,17 +54,17 @@ The language uses Result types for recoverable errors:
 
 ```suma
 pub divide(a: Int, b: Int) {
-    if (b == 0) {
+    if b == 0 {
         return Err("Division by zero")
     }
     return Ok(a / b)
 }
 
 pub main(): Int {
-    result: R = divide(10, 2)
-    result -> {
-        Ok = print("Result: " + to_str(it))
-        Err = print("Error: " + it)
+    result = divide(10, 2)
+    match result {
+        Ok => print("Result: {it}")
+        Err => print("Error: {it}")
     }
     return 0
 }
@@ -68,16 +74,16 @@ Classes work like this:
 
 ```suma
 pub Person {
-    pri name: Str
-    pri age: Int
+    name: Str
+    age: Int
 
-    pub init(name: Str, age: Int) {
+    init(name: Str, age: Int) {
         this.name = name
         this.age = age
     }
 
     pub greet(): Str {
-        return "Hello, I'm " + this.name
+        return "Hello, I'm {this.name}"
     }
 }
 
@@ -163,7 +169,7 @@ seed: Int
 result: Int
 
 pub main(): Int {
-    result = seed + 2
+    @result = seed + 2
     return result
 }
 """
@@ -199,8 +205,11 @@ You can also import Python modules directly:
 
 ```suma
 import "py:math"
-import "py:numpy as np"
+import "py:json"
 ```
+
+Python imports are disabled by default. Allow trusted modules explicitly with
+`SUMA_PY_IMPORTS`, for example `SUMA_PY_IMPORTS=math,json`.
 
 `SUMA_PATH` and `SUMA_STDLIB_PATHS` both use the platform path separator:
 `:` on Unix-like systems, `;` on Windows.

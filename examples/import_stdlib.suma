@@ -24,9 +24,9 @@ pub main(): Int {
     print("score class = " + describe_score(score))
 
     positive: R = require_positive(score)
-    positive -> {
-        Ok = print("positive score = " + to_str(it))
-        Err = print("unexpected error = " + it)
+    match positive {
+        Ok => print("positive score = " + to_str(it))
+        Err => print("unexpected error = " + it)
     }
 
     return score

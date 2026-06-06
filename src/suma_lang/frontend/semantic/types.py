@@ -12,8 +12,37 @@ from collections.abc import Sequence
 
 from suma_lang.frontend.parser.ast_nodes import Param
 
+ERROR_TYPE = "<error>"
+
+
+def normalize_type_name(type_name: str | None) -> str | None:
+    if type_name is None:
+        return None
+    if type_name == "Result":
+        return "R"
+    if type_name.startswith("Result<"):
+        return "R<" + type_name[len("Result<") :]
+    return type_name
+
+
+def nullable_type(inner: str | None) -> str | None:
+    inner = normalize_type_name(inner)
+    if inner is None:
+        return None
+    if inner == "Null" or base_type(inner) == "Nullable":
+        return inner
+    return f"Nullable<{inner}>"
+
+
+def nullable_inner_type(type_name: str | None) -> str | None:
+    if base_type(type_name) != "Nullable":
+        return None
+    args = split_type_args(type_name)
+    return args[0] if args else None
+
 
 def base_type(type_name: str | None) -> str | None:
+    type_name = normalize_type_name(type_name)
     if type_name is None:
         return None
     if "<" not in type_name:
@@ -22,6 +51,7 @@ def base_type(type_name: str | None) -> str | None:
 
 
 def split_type_args(type_name: str | None) -> list[str]:
+    type_name = normalize_type_name(type_name)
     if type_name is None or "<" not in type_name or not type_name.endswith(">"):
         return []
     inner = type_name[type_name.index("<") + 1 : -1]
@@ -78,22 +108,33 @@ def function_return_type(type_name: str | None) -> str | None:
 
 
 def lambda_type(params: Sequence[Param], return_type: str | None, result_type: str | None) -> str:
-    arg_types = [param.type_annotation or "Any" for param in params]
-    resolved_return = return_type or result_type or "Null"
+    arg_types = [normalize_type_name(param.type_annotation) or "Any" for param in params]
+    resolved_return = normalize_type_name(return_type or result_type) or "Null"
     return f"Function<{','.join([*arg_types, resolved_return])}>"
 
 
 def erase_type(type_name: str | None) -> str | None:
+    type_name = normalize_type_name(type_name)
     if type_name is None:
         return None
     return base_type(type_name)
 
 
+def is_error_type(type_name: str | None) -> bool:
+    type_name = normalize_type_name(type_name)
+    if type_name is None:
+        return False
+    if type_name == ERROR_TYPE:
+        return True
+    return any(is_error_type(arg) for arg in split_type_args(type_name))
+
+
 def substitute_type(type_name: str | None, mapping: dict[str, str | None]) -> str | None:
+    type_name = normalize_type_name(type_name)
     if type_name is None:
         return None
     if type_name in mapping:
-        return mapping[type_name]
+        return mapping[type_name] if mapping[type_name] is not None else ERROR_TYPE
     args = split_type_args(type_name)
     if not args:
         return type_name

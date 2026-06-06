@@ -30,9 +30,11 @@ _ARG_OPS = frozenset(
         Op.JUMP_IF_TRUE,
         Op.CALL,
         Op.MAKE_LIST,
+        Op.MAKE_TUPLE,
         Op.MAKE_OBJECT,
         Op.MAKE_LAMBDA,
         Op.MAKE_RANGE,
+        Op.IS_ENUM_VARIANT,
         Op.MEMBER,
         Op.SET_MEMBER,
         Op.SLICE,
@@ -42,6 +44,7 @@ _ARG_OPS = frozenset(
 
 _ARG_COUNTS = {op: 1 for op in _ARG_OPS}
 _ARG_COUNTS[Op.MAKE_OBJECT] = 2
+_ARG_COUNTS[Op.MAKE_ENUM] = 2
 _ARG_COUNTS.update(
     {
         Op.JUMP_IF_VAR_CMP: 4,
@@ -622,6 +625,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 i + 1 < len(result)
                 and instr.op == Op.LOAD_CONST
                 and result[i + 1].op == Op.JUMP_IF_FALSE
+                and not has_jump_target(i, 2)
             ):
                 val = _const_at(constants, instr)
                 if val is True:
@@ -644,6 +648,7 @@ def _peephole(instrs: list[Instr], constants: list[object]) -> list[Instr]:
                 i + 1 < len(result)
                 and instr.op == Op.LOAD_CONST
                 and result[i + 1].op == Op.JUMP_IF_TRUE
+                and not has_jump_target(i, 2)
             ):
                 val = _const_at(constants, instr)
                 if val is True:

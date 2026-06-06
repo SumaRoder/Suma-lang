@@ -16,7 +16,10 @@ from suma_lang.frontend.parser.ast_nodes import (
     ContinueStmt,
     Decorator,
     DestructureAssignStmt,
+    DestructureDeclStmt,
     ElvExpr,
+    EnumDecl,
+    EnumVariantDecl,
     ErrExpr,
     Expr,
     ExprStmt,
@@ -41,6 +44,7 @@ from suma_lang.frontend.parser.ast_nodes import (
     NullCoalesceExpr,
     NullLiteral,
     OkExpr,
+    OuterIdentifier,
     Param,
     PatternMatchExpr,
     Program,
@@ -57,6 +61,7 @@ from suma_lang.frontend.parser.ast_nodes import (
     ThrowStmt,
     TopLevel,
     TryCatchStmt,
+    TupleExpr,
     UnaryExpr,
     VarDecl,
     WhileStmt,
@@ -132,6 +137,7 @@ class Parser:
                 TokenType.PRIVATE,
                 TokenType.IMPORT,
                 TokenType.CONST,
+                TokenType.ENUM,
                 TokenType.ID,
             ):
                 break
@@ -193,7 +199,6 @@ class Parser:
                     TokenType.RBRA,
                     TokenType.SEM,
                     TokenType.DOT,
-                    TokenType.QUEST,
                     TokenType.ARROW,
                 }
             ):
@@ -217,8 +222,13 @@ class Parser:
                     return None
                 depth -= 2
                 index += 1
-            elif token_type == TokenType.COMMA and depth > 0:
+            elif depth > 0 and (
+                token_type == TokenType.COMMA or (token_type == TokenType.QUEST and saw_token)
+            ):
                 index += 1
+            elif token_type == TokenType.QUEST and depth == 0 and saw_token:
+                index += 1
+                return index
             else:
                 return None
         return index if saw_token and depth == 0 else None
@@ -249,13 +259,20 @@ class Parser:
                 if depth < 0:
                     return None
                 index += 1
-            elif token_type == TokenType.COMMA and depth > 0:
+            elif depth > 0 and (
+                token_type == TokenType.COMMA or (token_type == TokenType.QUEST and saw_token)
+            ):
                 index += 1
+            elif token_type == TokenType.QUEST and depth == 0 and saw_token:
+                index += 1
+                break
             else:
                 return None
         return index if saw_token and depth == 0 else None
 
     def _parse_type_name(self) -> str:
+        if self._at(TokenType.LPAR):
+            return self._parse_tuple_type_name()
         if not self._at(TokenType.ID):
             self._error(f"Expected type name, got {self._cur().type.value}")
 
@@ -305,6 +322,9 @@ class Parser:
             elif token_type == TokenType.COMMA and depth > 0:
                 parts.append(",")
                 self._advance()
+            elif token_type == TokenType.QUEST and depth > 0 and saw_token:
+                parts.append("?")
+                self._advance()
             else:
                 if depth > 0:
                     self._error(f"Unexpected token {token_type.value} in type annotation")
@@ -314,7 +334,57 @@ class Parser:
             self._error("Expected type name")
         if depth != 0:
             self._error("Unterminated generic type annotation")
-        return "".join(parts)
+        type_name = self._normalize_type_name("".join(parts))
+        if self._match(TokenType.QUEST):
+            return f"Nullable<{type_name}>"
+        return type_name
+
+    def _normalize_type_name(self, type_name: str) -> str:
+        def parse(index: int) -> tuple[str, int]:
+            start = index
+            while index < len(type_name) and (
+                type_name[index].isalnum() or type_name[index] == "_"
+            ):
+                index += 1
+            if start == index:
+                return type_name[start:], len(type_name)
+            base = type_name[start:index]
+            if base == "Result":
+                base = "R"
+            if index < len(type_name) and type_name[index] == "<":
+                index += 1
+                args: list[str] = []
+                while index < len(type_name) and type_name[index] != ">":
+                    arg, index = parse(index)
+                    args.append(arg)
+                    if index < len(type_name) and type_name[index] == ",":
+                        index += 1
+                        continue
+                    break
+                if index < len(type_name) and type_name[index] == ">":
+                    index += 1
+                base = f"{base}<{','.join(args)}>"
+            if index < len(type_name) and type_name[index] == "?":
+                index += 1
+                base = f"Nullable<{base}>"
+            return base, index
+
+        normalized, index = parse(0)
+        return normalized + type_name[index:]
+
+    def _parse_tuple_type_name(self) -> str:
+        self._expect(TokenType.LPAR)
+        types = [self._parse_type_name()]
+        if not self._match(TokenType.COMMA):
+            self._error("Tuple type must contain at least two elements")
+        types.append(self._parse_type_name())
+        while self._match(TokenType.COMMA):
+            types.append(self._parse_type_name())
+        self._expect(TokenType.RPAR)
+        type_name = f"Tuple<{','.join(types)}>"
+        if self._match(TokenType.QUEST):
+            return f"Nullable<{type_name}>"
+        return type_name
 
     def _matching_rpar_index(self, start: int) -> int | None:
         depth = 0
@@ -366,7 +436,8 @@ class Parser:
             return True
         if next_token.type != TokenType.COLON:
             return False
-        return rpar + 3 < len(self._tokens) and self._tokens[rpar + 3].type == TokenType.ARROW
+        after_type = self._next_after_type_name(rpar + 2)
+        return after_type is not None and self._tokens[after_type].type == TokenType.ARROW
 
     @staticmethod
     def parse(tokens: list[Token]) -> Program:
@@ -386,19 +457,30 @@ class Parser:
         decorators = self._parse_decorators()
 
         is_pub = False
+        saw_visibility = False
         is_const = False
         if self._match(TokenType.PUBLIC):
             is_pub = True
-        else:
-            self._match(TokenType.PRIVATE)
+            saw_visibility = True
+        elif self._match(TokenType.PRIVATE):
+            saw_visibility = True
 
         if self._at(TokenType.IMPORT):
+            if saw_visibility:
+                self._error("import declarations cannot be marked pub or pri")
             if decorators:
                 self._error("Decorators can only be applied to functions")
             return self._parse_import()
 
         if self._match(TokenType.CONST):
             is_const = True
+
+        if self._at(TokenType.ENUM):
+            if decorators:
+                self._error("Decorators cannot be applied to enum declarations")
+            if is_const:
+                self._error("Enums cannot be const")
+            return self._parse_enum(is_pub)
 
         if self._at(TokenType.ID):
             after_name = self._next_after_optional_type_params(self._pos + 1)
@@ -428,9 +510,38 @@ class Parser:
     def _parse_import(self) -> ImportDecl:
         info = self._cur().info
         self._expect(TokenType.IMPORT)
-        path_tok = self._expect(TokenType.STRING)
+        if not self._at(TokenType.STRING, TokenType.RAW_STRING):
+            self._error(f"Expected {TokenType.STRING.value}, got {self._cur().type.value}")
+        path_tok = self._advance()
         self._match(TokenType.SEM)
         return ImportDecl(path=self._literal(path_tok), info=info)
+
+    def _parse_enum(self, is_pub: bool) -> EnumDecl:
+        info = self._cur().info
+        self._expect(TokenType.ENUM)
+        name = self._literal(self._expect(TokenType.ID))
+        self._expect(TokenType.LBRA)
+        variants: list[EnumVariantDecl] = []
+        while not self._at(TokenType.RBRA, TokenType.EOF):
+            variant_tok = self._expect(TokenType.ID)
+            payload_type = None
+            if self._match(TokenType.LPAR):
+                if self._at(TokenType.RPAR):
+                    self._error("Enum variant payload type cannot be empty")
+                payload_type = self._parse_type_name()
+                self._expect(TokenType.RPAR)
+            variants.append(
+                EnumVariantDecl(
+                    name=self._literal(variant_tok),
+                    payload_type=payload_type,
+                    info=variant_tok.info,
+                )
+            )
+            self._match(TokenType.COMMA, TokenType.SEM)
+        self._expect(TokenType.RBRA)
+        if not variants:
+            self._error(f"Enum '{name}' must declare at least one variant")
+        return EnumDecl(name=name, variants=tuple(variants), is_pub=is_pub, info=info)
 
     def _parse_class(self, is_pub: bool, decorators: Sequence[Decorator] = ()) -> ClassDecl:
         name_tok = self._expect(TokenType.ID)
@@ -529,7 +640,7 @@ class Parser:
         param = params[0]
         if param.type_annotation is None:
             self._error("Setter parameter must declare a type")
-        if param.default is not None or param.is_optional:
+        if param.default is not None:
             self._error("Setter parameter cannot be optional or have a default value")
         if self._match(TokenType.COLON):
             self._error("Setters cannot declare a return type")
@@ -550,12 +661,12 @@ class Parser:
             after_name = self._next_after_optional_type_params(self._pos + 1)
             if after_name < len(self._tokens) and self._tokens[after_name].type == TokenType.LPAR:
                 return self._parse_function_decl(is_pub, False, decorators)
-            elif self._peek(1).type == TokenType.COLON:
+            elif self._peek(1).type in (TokenType.COLON, TokenType.ASSIGN):
                 if decorators:
                     self._error("Decorators can only be applied to functions")
                 return self._parse_var_decl(is_pub, is_const)
             else:
-                self._error("Expected '(' for function or ':' for variable")
+                self._error("Expected '(' for function or ':'/'=' for variable")
         self._error(f"Unexpected token {self._cur().type.value}")
 
     def _parse_function_decl(
@@ -597,8 +708,6 @@ class Parser:
         is_optional = False
         if self._match(TokenType.COLON):
             type_ann = self._parse_type_name()
-        if self._match(TokenType.QUEST):
-            is_optional = True
         if self._match(TokenType.ASSIGN):
             default = self._parse_expression()
             is_optional = True
@@ -658,9 +767,26 @@ class Parser:
         if self._at(TokenType.ID) and self._peek(1).type == TokenType.COLON:
             is_pub = False
             is_const = False
-            return self._parse_var_decl(is_pub, is_const)
+            decl = self._parse_var_decl(is_pub, is_const)
+            if decl.initializer is None:
+                self._error("local declarations must include an initializer")
+            return decl
 
         return self._parse_expr_stmt()
+
+    def _parse_destructure_decl(self, info) -> DestructureDeclStmt:
+        self._expect(TokenType.LPAR)
+        targets = [self._literal(self._expect(TokenType.ID))]
+        if not self._match(TokenType.COMMA):
+            self._error("Destructuring declarations require at least two targets")
+        targets.append(self._literal(self._expect(TokenType.ID)))
+        while self._match(TokenType.COMMA):
+            targets.append(self._literal(self._expect(TokenType.ID)))
+        self._expect(TokenType.RPAR)
+        self._expect(TokenType.ASSIGN)
+        value = self._parse_expression()
+        self._match(TokenType.SEM)
+        return DestructureDeclStmt(targets=tuple(targets), value=value, info=info)
 
     def _parse_return(self) -> ReturnStmt:
         info = self._cur().info
@@ -674,16 +800,12 @@ class Parser:
     def _parse_if(self) -> IfStmt:
         info = self._cur().info
         self._expect(TokenType.IF)
-        self._expect(TokenType.LPAR)
-        cond = self._parse_expression()
-        self._expect(TokenType.RPAR)
+        cond = self._parse_paren_or_bare_condition(allow_result_else=False)
         then = self._parse_block()
 
         elifs: list[tuple[Expr, BlockStmt]] = []
         while self._match(TokenType.ELIF):
-            self._expect(TokenType.LPAR)
-            elif_cond = self._parse_expression()
-            self._expect(TokenType.RPAR)
+            elif_cond = self._parse_paren_or_bare_condition(allow_result_else=False)
             elif_body = self._parse_block()
             elifs.append((elif_cond, elif_body))
 
@@ -702,16 +824,12 @@ class Parser:
     def _parse_if_expr(self) -> IfExpr:
         info = self._cur().info
         self._expect(TokenType.IF)
-        self._expect(TokenType.LPAR)
-        cond = self._parse_expression()
-        self._expect(TokenType.RPAR)
+        cond = self._parse_paren_or_bare_condition(allow_result_else=False)
         then = self._parse_block()
 
         elifs: list[tuple[Expr, BlockStmt]] = []
         while self._match(TokenType.ELIF):
-            self._expect(TokenType.LPAR)
-            elif_cond = self._parse_expression()
-            self._expect(TokenType.RPAR)
+            elif_cond = self._parse_paren_or_bare_condition(allow_result_else=False)
             elif_body = self._parse_block()
             elifs.append((elif_cond, elif_body))
 
@@ -730,11 +848,16 @@ class Parser:
     def _parse_while(self) -> WhileStmt:
         info = self._cur().info
         self._expect(TokenType.WHILE)
-        self._expect(TokenType.LPAR)
-        condition = self._parse_expression()
-        self._expect(TokenType.RPAR)
+        condition = self._parse_paren_or_bare_condition(allow_result_else=False)
         body = self._parse_block()
         return WhileStmt(condition=condition, body=body, info=info)
+
+    def _parse_paren_or_bare_condition(self, *, allow_result_else: bool = True) -> Expr:
+        if self._match(TokenType.LPAR):
+            condition = self._parse_expression()
+            self._expect(TokenType.RPAR)
+            return condition
+        return self._parse_expression(allow_result_else=allow_result_else)
 
     def _parse_for_in(self) -> ForInStmt:
         info = self._cur().info
@@ -834,14 +957,14 @@ class Parser:
         self._match(TokenType.SEM)
         return DestructureAssignStmt(targets=tuple(targets), value=value, info=info)
 
-    def _parse_expression(self) -> Expr:
-        return self._parse_assignment()
+    def _parse_expression(self, *, allow_result_else: bool = True) -> Expr:
+        return self._parse_assignment(allow_result_else=allow_result_else)
 
-    def _parse_assignment(self) -> Expr:
-        left = self._parse_range()
+    def _parse_assignment(self, *, allow_result_else: bool = True) -> Expr:
+        left = self._parse_range(allow_result_else=allow_result_else)
         if self._at(TokenType.ASSIGN):
             info = self._advance().info
-            right = self._parse_assignment()
+            right = self._parse_assignment(allow_result_else=allow_result_else)
             return AssignExpr(target=left, value=right, info=info)
         for op_tt, op_str in [
             (TokenType.ADD_ASSIGN, "+="),
@@ -852,28 +975,26 @@ class Parser:
         ]:
             if self._at(op_tt):
                 info = self._advance().info
-                right = self._parse_assignment()
+                right = self._parse_assignment(allow_result_else=allow_result_else)
                 return CompoundAssignExpr(op=op_str, target=left, value=right, info=info)
         return left
 
-    def _parse_elvis(self) -> Expr:
+    def _parse_elvis(self, *, allow_result_else: bool = True) -> Expr:
         left = self._parse_or()
-        if self._at(TokenType.QUEST) and self._peek(1).type == TokenType.COLON:
-            self._advance()
-            self._advance()
-            right = self._parse_or()
+        if allow_result_else and self._match(TokenType.ELSE):
+            right = self._parse_elvis(allow_result_else=allow_result_else)
             return ElvExpr(left=left, right=right, info=left.info)
         if self._match(TokenType.NULL_COALESCE):
-            right = self._parse_elvis()
+            right = self._parse_elvis(allow_result_else=allow_result_else)
             return NullCoalesceExpr(left=left, right=right, info=left.info)
         return left
 
-    def _parse_range(self) -> Expr:
-        left = self._parse_elvis()
+    def _parse_range(self, *, allow_result_else: bool = True) -> Expr:
+        left = self._parse_elvis(allow_result_else=allow_result_else)
         if self._at(TokenType.RANGE, TokenType.RANGE_INCLUSIVE):
             inclusive = self._cur().type == TokenType.RANGE_INCLUSIVE
             info = self._advance().info
-            right = self._parse_elvis()
+            right = self._parse_elvis(allow_result_else=allow_result_else)
             return RangeExpr(start=left, end=right, inclusive=inclusive, info=info)
         return left
 
@@ -1044,8 +1165,6 @@ class Parser:
             elif self._at(TokenType.QUEST) and self._peek(1).type != TokenType.COLON:
                 info = self._advance().info
                 expr = PropagateExpr(value=expr, info=info)
-            elif self._at(TokenType.ARROW):
-                expr = self._parse_pattern_match(expr)
             elif self._at(TokenType.PLUSPLUS, TokenType.MINUSMINUS) and not isinstance(
                 expr, IncrementExpr
             ):
@@ -1093,53 +1212,77 @@ class Parser:
         member = self._literal(self._expect(TokenType.ID))
         return MemberExpr(obj=obj, member=member, info=obj.info)
 
-    def _parse_pattern_match(self, scrutinee: Expr) -> PatternMatchExpr:
+    def _parse_match_expr(self) -> PatternMatchExpr:
         info = self._cur().info
-        self._expect(TokenType.ARROW)
+        self._expect(TokenType.MATCH)
+        scrutinee = self._parse_expression()
         self._expect(TokenType.LBRA)
-        arms: list[MatchArm] = []
-        while not self._at(TokenType.RBRA, TokenType.EOF):
-            arm_info = self._cur().info
-            pattern = self._parse_match_pattern()
-            # body can be = then expr or { block }
-            if self._at(TokenType.LBRA):
-                body = self._parse_block()
-            elif self._match(TokenType.ASSIGN):
-                body = self._parse_block() if self._at(TokenType.LBRA) else self._parse_expression()
-                self._match(TokenType.SEM)
-            else:
-                body = self._parse_expression()
-                self._match(TokenType.SEM)
-            arms.append(MatchArm(pattern=pattern, body=body, info=arm_info))
+        arms = self._parse_match_arms()
         self._expect(TokenType.RBRA)
         return PatternMatchExpr(scrutinee=scrutinee, arms=arms, info=info)
 
-    def _parse_match_pattern(self) -> MatchPattern:
+    def _parse_match_arms(self) -> list[MatchArm]:
+        arms: list[MatchArm] = []
+        while not self._at(TokenType.RBRA, TokenType.EOF):
+            arm_info = self._cur().info
+            pattern, binding = self._parse_match_pattern()
+            self._expect(TokenType.FAT_ARROW)
+            body = self._parse_block() if self._at(TokenType.LBRA) else self._parse_expression()
+            self._match(TokenType.SEM)
+            arms.append(MatchArm(pattern=pattern, binding=binding, body=body, info=arm_info))
+        return arms
+
+    def _parse_optional_binding(self) -> str | None:
+        if not self._match(TokenType.LPAR):
+            return None
+        name = self._literal(self._expect(TokenType.ID))
+        self._expect(TokenType.RPAR)
+        return name
+
+    def _parse_match_pattern(self) -> tuple[MatchPattern, str | None]:
         if self._match(TokenType.IS):
             type_name = self._parse_type_name()
-            return MatchPattern(kind="type", value=type_name)
+            return MatchPattern(kind="type", value=type_name), self._parse_optional_binding()
         if self._at(
             TokenType.STRING,
+            TokenType.RAW_STRING,
             TokenType.INT,
             TokenType.FLOAT,
             TokenType.TRUE,
             TokenType.FALSE,
             TokenType.NULL,
         ):
-            return MatchPattern(kind="literal", value=self._parse_primary())
+            pattern = MatchPattern(kind="literal", value=self._parse_primary())
+            return pattern, self._parse_optional_binding()
         tok = self._expect(TokenType.ID)
         name = self._literal(tok)
+        if self._match(TokenType.DOT):
+            variant = self._literal(self._expect(TokenType.ID))
+            return MatchPattern(
+                kind="enum", value=f"{name}.{variant}"
+            ), self._parse_optional_binding()
         if name in ("Ok", "Err"):
-            return MatchPattern(kind="result", value=name)
+            return MatchPattern(kind="result", value=name), self._parse_optional_binding()
         if name == "_":
-            return MatchPattern(kind="wildcard", value=None)
-        return MatchPattern(kind="literal", value=Identifier(name=name, info=tok.info))
+            return MatchPattern(kind="wildcard", value=None), self._parse_optional_binding()
+        return (
+            MatchPattern(kind="literal", value=Identifier(name=name, info=tok.info)),
+            self._parse_optional_binding(),
+        )
 
     def _parse_primary(self) -> Expr:
         tok = self._cur()
 
         if self._at(TokenType.IF):
             return self._parse_if_expr()
+
+        if self._at(TokenType.MATCH):
+            return self._parse_match_expr()
+
+        if self._at(TokenType.AT):
+            info = self._advance().info
+            name = self._literal(self._expect(TokenType.ID))
+            return OuterIdentifier(name=name, info=info)
 
         if self._at(TokenType.INT):
             self._advance()
@@ -1149,9 +1292,13 @@ class Parser:
             self._advance()
             return FloatLiteral(value=float(self._literal(tok)), info=tok.info)
 
-        if self._at(TokenType.STRING):
+        if self._at(TokenType.STRING, TokenType.RAW_STRING):
             self._advance()
-            return self._parse_string_literal(self._literal(tok), tok.info)
+            return self._parse_string_literal(
+                self._literal(tok),
+                tok.info,
+                allow_interpolation=tok.type == TokenType.STRING,
+            )
 
         if self._at(TokenType.TRUE):
             self._advance()
@@ -1204,6 +1351,9 @@ class Parser:
         if self._at(TokenType.LPAR) and self._is_paren_lambda_ahead():
             return self._parse_lambda()
 
+        if self._at(TokenType.LPAR) and self._is_tuple_literal_ahead():
+            return self._parse_tuple_literal()
+
         # Identifier
         if self._at(TokenType.ID):
             self._advance()
@@ -1218,7 +1368,74 @@ class Parser:
 
         self._error(f"Unexpected token {tok.type.value}")
 
-    def _parse_string_literal(self, value: str, info) -> Expr:
+    def _is_tuple_literal_ahead(self) -> bool:
+        if not self._at(TokenType.LPAR):
+            return False
+        depth = 0
+        index = self._pos
+        while index < len(self._tokens):
+            token_type = self._tokens[index].type
+            if token_type == TokenType.LPAR:
+                depth += 1
+            elif token_type == TokenType.RPAR:
+                depth -= 1
+                if depth == 0:
+                    return False
+            elif token_type == TokenType.COMMA and depth == 1:
+                return True
+            elif token_type == TokenType.EOF:
+                return False
+            index += 1
+        return False
+
+    def _parse_tuple_literal(self) -> TupleExpr:
+        info = self._cur().info
+        self._expect(TokenType.LPAR)
+        elements = [self._parse_expression()]
+        if not self._match(TokenType.COMMA):
+            self._error("Tuple literal must contain at least two elements")
+        elements.append(self._parse_expression())
+        while self._match(TokenType.COMMA):
+            elements.append(self._parse_expression())
+        self._expect(TokenType.RPAR)
+        return TupleExpr(elements=tuple(elements), info=info)
+
+    def _find_interpolation_end(self, value: str, start: int) -> int | None:
+        depth = 1
+        index = start + 1
+        quote: str | None = None
+
+        while index < len(value):
+            ch = value[index]
+            if quote is not None:
+                if ch == "\\":
+                    index += 2
+                    continue
+                if ch == quote:
+                    quote = None
+                index += 1
+                continue
+            if ch in "\"'":
+                quote = ch
+                index += 1
+                continue
+            if ch == "{":
+                depth += 1
+                index += 1
+                continue
+            if ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return index
+                index += 1
+                continue
+            index += 1
+        return None
+
+    def _parse_string_literal(self, value: str, info, *, allow_interpolation: bool = True) -> Expr:
+        if not allow_interpolation:
+            return StrLiteral(value=value, info=info)
+
         parts: list[Expr] = []
         literal: list[str] = []
         index = 0
@@ -1239,8 +1456,8 @@ class Parser:
                 index += 1
                 continue
 
-            end = value.find("}", index + 1)
-            if end < 0:
+            end = self._find_interpolation_end(value, index)
+            if end is None:
                 literal.append(ch)
                 index += 1
                 continue

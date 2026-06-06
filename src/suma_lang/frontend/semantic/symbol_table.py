@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     from suma_lang.frontend.parser.ast_nodes import (
         ClassDecl,
+        EnumDecl,
         FunctionDecl,
         GetterDecl,
         ImportDecl,
@@ -15,7 +16,15 @@ if TYPE_CHECKING:
     )
 
     SymbolDecl: TypeAlias = (
-        ClassDecl | FunctionDecl | GetterDecl | ImportDecl | Param | SetterDecl | VarDecl | str
+        ClassDecl
+        | EnumDecl
+        | FunctionDecl
+        | GetterDecl
+        | ImportDecl
+        | Param
+        | SetterDecl
+        | VarDecl
+        | str
     )
 else:
     SymbolDecl = object
@@ -25,7 +34,7 @@ else:
 class Symbol:
     name: str
     type_name: str | None
-    kind: str  # "var", "func", "class", "param", "builtin"
+    kind: str  # "var", "func", "class", "enum", "param", "builtin"
     decl: SymbolDecl | None = None  # reference to AST node
     is_pub: bool = False
     index: int = 0  # slot index in VM

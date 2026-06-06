@@ -78,6 +78,32 @@ pub main(): Int {
 
 
 @pytest.mark.parametrize("use_ir", [False, True])
+def test_enum_argument_runtime_overload_dispatch(use_ir: bool):
+    source = """
+enum Packet {
+    Data(Int),
+    Empty
+}
+
+pub score(value: Packet): Int {
+    return match value {
+        Packet.Data => it + 1
+        Packet.Empty => 0
+    }
+}
+
+pub score(value: Int): Int {
+    return value
+}
+
+pub main(): Int {
+    return score(Packet.Data(41))
+}
+"""
+    assert _run(source, use_ir=use_ir) == 42
+
+
+@pytest.mark.parametrize("use_ir", [False, True])
 def test_method_overload_by_parameter_type(use_ir: bool):
     source = """
 Scorer {
@@ -125,20 +151,24 @@ pub main(): Int {
     assert _run(source, use_ir=use_ir) == 42
 
 
-@pytest.mark.parametrize("use_ir", [False, True])
-def test_numeric_leading_identifiers_and_hex_literals(use_ir: bool):
-    source = """
-pub 2cool(): Int {
-    return 0x28
-}
-
+def test_hex_literals_still_work_and_digit_leading_identifiers_are_rejected():
+    hex_source = """
 pub main(): Int {
-    123abc = 2
-    plus: Function = (7x: Int): Int -> 7x + 1
-    return 2cool() + 123abc + plus(0) - 1
+    return 0x28 + 2
 }
 """
-    assert _run(source, use_ir=use_ir) == 42
+    assert _run(hex_source) == 42
+
+    for source in ("123abc", "2cool", "42foo", "0x", "0x1g"):
+        with pytest.raises(SyntaxError, match="Invalid numeric literal suffix"):
+            Tokenizer.tokenize(source, file_name="<test>")
+
+    with pytest.raises(SyntaxError, match="Invalid numeric literal suffix"):
+        _parse("""
+pub main(): Int {
+    return 2cool()
+}
+""")
 
 
 def test_generic_overloads_with_same_erasure_are_rejected():
@@ -174,7 +204,7 @@ pub main(): Int {
 }
 """
     errors = _analyze(source)
-    assert any("optional/default" in error and "f" in error for error in errors)
+    assert any("default parameters" in error and "f" in error for error in errors)
 
 
 def test_overload_metadata_survives_serialization():
@@ -222,6 +252,55 @@ pub main(): Int {
 }
 """
     assert _run(source, use_ir=use_ir) == 42
+
+
+def test_generic_method_rejects_return_type_erasure_soundness_bug():
+    source = """
+Box<T> {
+    pub value: T
+
+    init(value: T) {
+        this.value = value
+    }
+
+    pub get_bad(): Int {
+        return this.value
+    }
+}
+
+pub main(): Int {
+    box: Box<Str> = Box("x")
+    return box.value.size
+}
+"""
+    errors = _analyze(source)
+    assert any(
+        "Function 'get_bad' returns T" in error and "expected Int" in error for error in errors
+    )
+
+
+def test_generic_method_rejects_bad_assignment_to_generic_field():
+    source = """
+Box<T> {
+    pub value: T
+
+    init(value: T) {
+        this.value = value
+    }
+
+    pub overwrite_bad(): Int {
+        this.value = 1
+        return 0
+    }
+}
+
+pub main(): Int {
+    box: Box<Str> = Box("x")
+    return box.value.size
+}
+"""
+    errors = _analyze(source)
+    assert any("Cannot assign Int to T" in error and "expected T" in error for error in errors)
 
 
 def test_overloaded_function_with_decorator_is_rejected():

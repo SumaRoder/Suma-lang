@@ -1,5 +1,7 @@
 """Tests for the bytecode optimizer."""
 
+import copy
+
 from suma_lang.backend.codegen.opcodes import Function, Op, ProgramBytecode
 from suma_lang.backend.codegen.optimizer import (
     Optimizer,
@@ -271,6 +273,26 @@ def test_peephole_const_false_jump_if_false():
     assert result[0].arg == 10
 
 
+def test_peephole_const_jump_guard_skips_targeted_window():
+    """Do not rewrite LOAD_CONST; JUMP_IF_FALSE when control can jump into it."""
+    constants = [True]
+    code = [
+        int(Op.JUMP),
+        4,
+        int(Op.LOAD_CONST),
+        0,
+        int(Op.JUMP_IF_FALSE),
+        6,
+        int(Op.LOAD_NULL),
+        int(Op.RETURN),
+    ]
+    instrs = decode(code)
+
+    result = _peephole(instrs, constants)
+
+    assert encode(result) == code
+
+
 # ── Full optimizer integration ─────────────────────────────
 
 
@@ -351,6 +373,38 @@ def test_optimizer_preserves_semantics():
     assert result_unopt == result_opt == 6
 
 
+def test_optimizer_preserves_semantics_when_jump_targets_conditional_window():
+    """A jump into LOAD_CONST; JUMP_IF_FALSE must keep its original control flow."""
+    from suma_lang.runtime.vm.vm import VM
+
+    constants = [False, True, 111, 222]
+    code = [
+        int(Op.LOAD_CONST),
+        0,  # false
+        int(Op.JUMP),
+        6,  # jump into the JUMP_IF_FALSE below
+        int(Op.LOAD_CONST),
+        1,  # true
+        int(Op.JUMP_IF_FALSE),
+        11,
+        int(Op.LOAD_CONST),
+        2,  # 111
+        int(Op.RETURN),
+        int(Op.LOAD_CONST),
+        3,  # 222
+        int(Op.RETURN),
+    ]
+    base_fn = Function(name="main", arity=0, code=code, constants=constants, locals_count=0)
+    unoptimized = ProgramBytecode(functions=[copy.deepcopy(base_fn)], constants=[], entry=0)
+    optimized = ProgramBytecode(functions=[copy.deepcopy(base_fn)], constants=[], entry=0)
+
+    result_unopt = VM(unoptimized).run()
+    optimize(optimized)
+    result_opt = VM(optimized).run()
+
+    assert result_unopt == result_opt == 222
+
+
 def test_optimizer_reduces_code_size():
     """Optimized code should be smaller for constant-heavy code."""
     constants = [10, 20, 30, 40]
@@ -410,8 +464,8 @@ pub fact(n: Int): Int {
     i: Int = 2
     loop {
         if (i > n) { break }
-        result *= i
-        i += 1
+        @result *= i
+        @i += 1
     }
     return result
 }
@@ -428,6 +482,40 @@ pub main(): Int {
     assert VM(program).run() == 120
 
 
+def test_range_for_lowering_avoids_range_object_direct_and_ir():
+    from suma_lang.api import CompileOptions, compile_source
+    from suma_lang.runtime.vm.vm import VM
+
+    source = """
+pub main(): Int {
+    total: Int = 0
+    for i in 0..=6 {
+        @total += i
+        @i += 10
+    }
+    for i in 0..4 {
+        if i == 1 { continue }
+        if i == 3 { break }
+        @total += i
+    }
+    return total * 2
+}
+"""
+
+    for use_ir in (False, True):
+        program = compile_source(
+            source,
+            "<range-for-fast-path>",
+            options=CompileOptions(optimize=False, use_ir=use_ir),
+        )
+        main_fn = program.functions[program.entry]
+        instrs = decode(main_fn.code)
+
+        assert all(instr.op != Op.MAKE_RANGE for instr in instrs)
+        assert all(instr.op != Op.INDEX for instr in instrs)
+        assert VM(program).run() == 46
+
+
 def test_dump_opt_formats_loop_generic_pseudocode():
     from suma_lang.cli import compile_source
 
@@ -437,8 +525,8 @@ pub sum_to(n: Int): Int {
     i: Int = 1
     loop {
         if (i > n) { break }
-        total += i
-        i += 1
+        @total += i
+        @i += 1
     }
     return total
 }

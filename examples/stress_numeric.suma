@@ -6,8 +6,8 @@ pub gcd(a: Int, b: Int): Int {
             break
         }
         r: Int = x % y
-        x = y
-        y = r
+        @x = y
+        @y = r
     }
     return x
 }
@@ -25,9 +25,9 @@ pub fib_iter(n: Int): Int {
             break
         }
         next: Int = a + b
-        a = b
-        b = next
-        i += 1
+        @a = b
+        @b = next
+        @i += 1
     }
     return a
 }
@@ -39,8 +39,8 @@ pub factorial_loop(n: Int): Int {
         if (i > n) {
             break
         }
-        result *= i
-        i += 1
+        @result *= i
+        @i += 1
     }
     return result
 }
@@ -63,14 +63,14 @@ pub checksum(limit: Int): Int {
             break
         }
         if (i % 2 == 0) {
-            total += gcd(i * 12, i * 18)
+            @total += gcd(i * 12, i * 18)
         } else {
-            total += lcm(i, i + 3) % 97
+            @total += lcm(i, i + 3) % 97
         }
         if (i % 5 == 0) {
-            total += bit_mix(i)
+            @total += bit_mix(i)
         }
-        i += 1
+        @i += 1
     }
     return total
 }

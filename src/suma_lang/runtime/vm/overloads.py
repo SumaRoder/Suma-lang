@@ -16,6 +16,7 @@ from suma_lang.backend.codegen.opcodes import Function
 from suma_lang.runtime.vm.errors import VMError
 from suma_lang.runtime.vm.values import (
     SumaCallable,
+    SumaEnum,
     SumaErr,
     SumaLambda,
     SumaList,
@@ -24,6 +25,7 @@ from suma_lang.runtime.vm.values import (
     SumaOverload,
     SumaPyObject,
     SumaRange,
+    SumaTuple,
 )
 
 
@@ -46,12 +48,16 @@ def runtime_type_name(value: Any) -> str:
         return "Str"
     if isinstance(value, SumaList):
         return "List"
+    if isinstance(value, SumaTuple):
+        return "Tuple"
     if isinstance(value, SumaRange):
         return "Range"
     if isinstance(value, SumaOk):
         return "Ok"
     if isinstance(value, SumaErr):
         return "Err"
+    if isinstance(value, SumaEnum):
+        return value.enum_name
     if isinstance(value, SumaObject):
         return value.class_name
     if isinstance(value, SumaPyObject):

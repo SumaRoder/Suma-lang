@@ -25,6 +25,7 @@ class IRType(Enum):
     STR = auto()
     NULL = auto()
     LIST = auto()
+    TUPLE = auto()
     OBJECT = auto()
     LAMBDA = auto()
     OK = auto()
@@ -341,6 +342,14 @@ class MakeList(IRInstr):
 
 
 @dataclass
+class MakeTuple(IRInstr):
+    """Create a tuple from elements."""
+
+    dest: VirtualReg
+    elements: list[Operand]
+
+
+@dataclass
 class MakeRange(IRInstr):
     """Create a range from start/end bounds."""
 
@@ -364,6 +373,15 @@ class MakeErr(IRInstr):
 
     dest: VirtualReg
     value: Operand
+
+
+@dataclass
+class MakeEnum(IRInstr):
+    """Create an enum variant value."""
+
+    dest: VirtualReg
+    tag: str
+    args: list[Operand]
 
 
 @dataclass
@@ -450,6 +468,15 @@ class IsErr(IRInstr):
 
     dest: VirtualReg
     src: Operand
+
+
+@dataclass
+class IsEnumVariant(IRInstr):
+    """Check whether a value is a specific enum variant."""
+
+    dest: VirtualReg
+    src: Operand
+    tag: str
 
 
 @dataclass
@@ -543,6 +570,7 @@ class IRFunction:
     # Local variable slots (for codegen)
     locals_count: int = 0
     capture_count: int = 0
+    capture_slots: list[int] = field(default_factory=list)
     param_types: list[str | None] = field(default_factory=list)
     type_params: list[str] = field(default_factory=list)
 
@@ -559,6 +587,7 @@ class IRProgram:
     functions: list[IRFunction] = field(default_factory=list)
     entry: int = 0  # index of entry function
     classes: dict[str, dict] = field(default_factory=dict)
+    enums: dict[str, dict] = field(default_factory=dict)
     constants: list[object] = field(default_factory=list)
     py_imports: dict[str, str] = field(default_factory=dict)
     decorated_functions: list[FunctionDecl] = field(default_factory=list)

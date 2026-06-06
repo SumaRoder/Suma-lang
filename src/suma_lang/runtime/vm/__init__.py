@@ -9,6 +9,7 @@ from suma_lang.runtime.vm.values import (
     SumaOverload,
     SumaPyObject,
     SumaRange,
+    SumaTuple,
 )
 from suma_lang.runtime.vm.vm import VM
 
@@ -18,6 +19,7 @@ __all__ = [
     "SumaOk",
     "SumaErr",
     "SumaList",
+    "SumaTuple",
     "SumaRange",
     "SumaObject",
     "SumaLambda",

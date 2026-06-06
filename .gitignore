@@ -1,11 +1,17 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+*.pyd
+*.so
 build/
 dist/
 wheels/
+*.whl
+.eggs/
 *.egg-info
 *.egg
+pip-wheel-metadata/
+__pypackages__/
 
 # Virtual environments
 .venv
@@ -22,8 +28,12 @@ ENV/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .tox/
+.nox/
+.hypothesis/
 
 # Compiled bytecode
 *.sumac
@@ -49,10 +59,14 @@ pyrightconfig.json
 
 # Pyenv / uv
 .python-version
+.uv-cache/
 
 # mypy
 .mypy_cache/
 .dmypy.json
+
+# pytype
+.pytype/
 
 # Jupyter
 .ipynb_checkpoints/

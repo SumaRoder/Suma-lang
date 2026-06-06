@@ -1,19 +1,19 @@
-pub Person {
-    pri name: Str
-    pri age: Int = 0
+Person {
+    name: Str
+    age: Int = 0
 
-    pub init(name: Str, age: Int) {
+    init(name: Str, age: Int) {
         this.name = name
         this.age = age
     }
 
     pub greet(): Str {
-        return "Hello, I'm " + this.name
+        return "Hello, I'm {this.name}"
     }
 }
 
 pub divide(a: Int, b: Int) {
-    if (b == 0) {
+    if b == 0 {
         return Err("Division by zero")
     }
     return Ok(a / b)
@@ -21,13 +21,12 @@ pub divide(a: Int, b: Int) {
 
 pub main(): Int {
     p: Person = Person("Alice", 25)
-    greeting: Str = p.greet()
-    print(greeting)
+    print(p.greet())
 
-    result: R = divide(10, 2)
-    result -> {
-        Ok = print("Result: " + to_str(it))
-        Err = print("Error: " + it)
+    result = divide(10, 2)
+    match result {
+        Ok => print("Result: {it}")
+        Err => print("Error: {it}")
     }
 
     return 0

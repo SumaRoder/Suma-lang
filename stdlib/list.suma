@@ -1,73 +1,48 @@
 pub list_sum(items: List): Int {
     total = 0
-    i = 0
-    loop {
-        if (i >= items.size) {
-            break
-        }
-        total += items[i]
-        i += 1
+    for v in items {
+        @total += v
     }
     return total
 }
 
 pub list_product(items: List): Int {
     result = 1
-    i = 0
-    loop {
-        if (i >= items.size) {
-            break
-        }
-        result *= items[i]
-        i += 1
+    for v in items {
+        @result *= v
     }
     return result
 }
 
 pub list_max(items: List): Int {
-    if (items.size == 0) {
+    if items.size == 0 {
         return 0
     }
     best = items[0]
-    i = 1
-    loop {
-        if (i >= items.size) {
-            break
+    for v in items {
+        if v > best {
+            @best = v
         }
-        if (items[i] > best) {
-            best = items[i]
-        }
-        i += 1
     }
     return best
 }
 
 pub list_min(items: List): Int {
-    if (items.size == 0) {
+    if items.size == 0 {
         return 0
     }
     best = items[0]
-    i = 1
-    loop {
-        if (i >= items.size) {
-            break
+    for v in items {
+        if v < best {
+            @best = v
         }
-        if (items[i] < best) {
-            best = items[i]
-        }
-        i += 1
     }
     return best
 }
 
 pub list_push_range(items: List, start: Int, end: Int): Int {
-    i = start
-    loop {
-        if (i > end) {
-            break
-        }
+    for i in start..=end {
         items.add(i)
-        i += 1
     }
     return items.size
 }

@@ -9,7 +9,7 @@ pub main(): Int {
     missing: R = Err("missing")
     fallback: R = Err(42)
     if (missing?.get() == null) {
-        return box?.get() + (fallback ?: 0)
+        return box?.get() + (fallback else 0)
     }
     return 0
 }

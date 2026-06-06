@@ -31,7 +31,7 @@ These come with the compiler, no import needed.
 - `len(x)` — length of string/list
 - `type_of(x)` — type name as string
 - `panic(msg)` — abort with message
-- `assert(cond, msg?)` — assert something is true
+- `assert(cond, msg = "Assertion failed")` — assert something is true
 
 ## core.suma
 
@@ -55,9 +55,9 @@ Some useful utilities for working with integers and validation.
 
 ```suma
 result = require_positive(user_input)
-result -> {
-    Ok = process(it)
-    Err = print("Invalid: " + it)
+match result {
+    Ok => process(it)
+    Err => print("Invalid: " + it)
 }
 ```
 
@@ -101,13 +101,13 @@ Located at `stdlib/json.suma`.
 
 JSON serialization and parsing.
 
-`to_json(value: Any): R` — rejects dynamic JSON conversion in static mode. Use typed helpers instead.
+`to_json(value: Any): R<Str, Str>` — rejects dynamic JSON conversion in static mode. Use typed helpers instead.
 
-`json_pretty(value: Any): R` — same behavior as `to_json` in static mode.
+`json_pretty(value: Any): R<Str, Str>` — same behavior as `to_json` in static mode.
 
-`to_json_str(value: Str): R`, `to_json_int(value: Int): R`, `to_json_float(value: Float): R`, `to_json_bool(value: Bool): R`, `to_json_null(): R` — typed JSON serialization helpers.
+`to_json_str(value: Str): R<Str, Str>`, `to_json_int(value: Int): R<Str, Str>`, `to_json_float(value: Float): R<Str, Str>`, `to_json_bool(value: Bool): R<Str, Str>`, `to_json_null(): R<Str, Str>` — typed JSON serialization helpers.
 
-`from_json(json_str: Str): R` — currently returns the input string; dynamic JSON parsing is not supported under static `Any` semantics.
+`from_json(json_str: Str): R<Str, Str>` — currently returns the input string; dynamic JSON parsing is not supported under static `Any` semantics.
 
 `json_object(): JsonObject` — creates an empty JSON object you can add keys to.
 
@@ -148,9 +148,9 @@ pub main(): Int {
     print("5! = " + to_str(factorial_int(5)))
     print("Fib(10) = " + to_str(fib_int(10)))
     
-    require_positive(-5) -> {
-        Ok = print("Valid: " + to_str(it)),
-        Err = print("Rejected: " + it)
+    match require_positive(-5) {
+        Ok => print("Valid: " + to_str(it))
+        Err => print("Rejected: " + it)
     }
     
     return 0

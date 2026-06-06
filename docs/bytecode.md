@@ -14,10 +14,11 @@ length prefix.
 | Offset / Size      | Field                       |
 +--------------------+-----------------------------+
 | 4 bytes            | Magic: ASCII "SUMA"         |
-| 4 bytes (u32)      | Version (current: 8)        |
+| 4 bytes (u32)      | Version (current: 11)       |
 | 4 bytes (u32)      | Entry function index        |
 | u32 + bytes        | Global constants section    |
 | u32 + bytes        | Classes JSON                |
+| u32 + bytes        | Enums JSON          (v≥10)  |
 | u32 + bytes        | Python imports JSON (v≥2)   |
 | u32 + bytes        | Decorators JSON     (v≥3)   |
 | u32 + bytes        | Method decorators JSON (v≥7)|
@@ -33,9 +34,8 @@ must consume exactly that many bytes before advancing.
 
 - **Magic:** `b"SUMA"`. A mismatch raises `BytecodeFormatError("Invalid .sumac
   file: bad magic")`.
-- **Version:** a `u32`. The current writer emits `8`. Readers accept versions
-  `1`–`8`; older versions skip the sections introduced in newer revisions
-  (see the version-gated sections above).
+- **Version:** a `u32`. The current writer emits `11`. Readers accept only
+  version `11`; recompile older `.sumac` files with the current compiler.
 - **Entry:** `u32` index into the function table. The VM starts execution
   here.
 
@@ -65,7 +65,7 @@ Unknown tag → `BytecodeFormatError`.
 
 ### JSON sections
 
-The `classes`, `py_imports`, `decorators`, `method_decorators`, and
+The `classes`, `enums`, `py_imports`, `decorators`, `method_decorators`, and
 `overloads` sections are encoded as `u32` length followed by a UTF-8 JSON
 document. Their schemas mirror the corresponding fields on
 `ProgramBytecode` (see `src/suma_lang/backend/codegen/opcodes.py`).
@@ -91,7 +91,7 @@ Each function record contains, in order:
 | `is_method`          | `u8` (1 / 0)                                |
 | `capture_count`      | `u32` (v ≥ 7; absent in older files → 0)    |
 | `class_name`         | `u32` length + UTF-8 bytes (empty → `None`) |
-| `signature`          | `u32` length + UTF-8 JSON (v ≥ 8); document has `param_types`, `type_params` |
+| `signature`          | `u32` length + UTF-8 JSON (v ≥ 8); document has `param_types`, `type_params`, and `capture_slots` (v ≥ 9) |
 | `code_count`         | `u32`                                       |
 | `code`               | `code_count` × `i32` little-endian          |
 | `local constants`    | Constants section (recursive, same format)  |
@@ -110,12 +110,15 @@ instruction is the opcode, followed by zero or more argument integers
 | 4–6     | Internal additions to existing sections     |
 | 7       | Method decorators JSON; per-function `capture_count` |
 | 8       | Overload sets JSON; per-function signature JSON |
+| 9       | Per-function explicit `capture_slots` in signature JSON |
+| 10      | Enums JSON section; enum construction and variant tests |
+| 11      | Tuple construction opcode and tuple bytecode support |
 
 ## Errors
 
 The reader raises `suma_lang.BytecodeFormatError` (a subclass of `ValueError`)
-on every structural problem: bad magic, unsupported version, truncated data,
-trailing data, unknown constant tags, or values that cannot be encoded.
+on every structural problem: bad magic, unsupported or stale version, truncated
+data, trailing data, unknown constant tags, or values that can't be encoded.
 
 The CLI prints these as `[Bytecode] {message}` and exits non-zero.
 
@@ -123,9 +126,9 @@ The CLI prints these as `[Bytecode] {message}` and exits non-zero.
 
 Opcodes are defined as a Python `IntEnum` in `opcodes.py` and assigned via
 `auto()`, so numeric values reflect declaration order rather than a frozen
-contract. **Do not hard-code numeric opcode values across versions.** Read
+contract. **Don't hard-code numeric opcode values across versions.** Read
 them from `Op` at the version you care about. The table below is the
-declaration order at version 8.
+declaration order at version 11.
 
 | Group          | Opcode                       | Arguments                                              |
 |----------------|------------------------------|--------------------------------------------------------|
@@ -146,13 +149,16 @@ declaration order at version 8.
 |                | `LOAD_FUNC`                  | function index                                         |
 | Data           | `MAKE_LIST`                  | element count                                          |
 |                | `MAKE_OK` / `MAKE_ERR`       | —                                                      |
+|                | `MAKE_ENUM`                  | const index (`"Enum.Variant"`), payload count          |
 |                | `MAKE_RANGE`                 | 1 if inclusive, else 0                                 |
+|                | `MAKE_TUPLE`                 | element count                                          |
 |                | `INDEX` / `SET_INDEX`        | —                                                      |
 |                | `SLICE`                      | bitmask: 1 = has_start, 2 = has_end                    |
 |                | `MEMBER` / `SET_MEMBER`      | const index (member name)                              |
-|                | `MAKE_OBJECT`                | const index (class name)                               |
+|                | `MAKE_OBJECT`                | const index (class name), constructor arg count        |
 |                | `MAKE_LAMBDA`                | function index                                         |
 | Matching       | `IS_OK` / `IS_ERR` / `UNWRAP_OK` | —                                                  |
+|                | `IS_ENUM_VARIANT`            | const index (`"Enum.Variant"`)                        |
 | I/O            | `PRINT`                      | —                                                      |
 | Misc           | `NOP` / `HALT`               | —                                                      |
 | Superinstructions (optimizer-emitted) | `JUMP_IF_VAR_CMP`   | left slot, right slot, cmp code, target           |

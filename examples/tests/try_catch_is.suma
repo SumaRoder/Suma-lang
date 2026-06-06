@@ -1,17 +1,15 @@
 pub classify(value: Any): Str {
-    if (value is Int) { return "int" }
-    if (value is Str) { return "str" }
+    if value is Int { return "int" }
+    if value is Str { return "str" }
     return "other"
 }
 
 pub main(): Int {
-    result: Int = 0
+    result = if classify(42) == "int" { 0 } else { 1 }
     try {
-        if (classify(42) == "int") {
-            throw 42
-        }
+        if result == 0 { throw 42 }
     } catch (err) {
-        result = err
+        return err
     }
     return result
 }

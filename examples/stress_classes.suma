@@ -57,38 +57,28 @@ pub Accumulator {
 }
 
 pub run_counter(counter: Counter, rounds: Int): Int {
-    i: Int = 0
-    last: Int = 0
-    loop {
-        if (i >= rounds) {
-            break
-        }
-        if (i % 3 == 0) {
+    last = 0
+    for i in 0..rounds {
+        if i % 3 == 0 {
             last = counter.inc()
-        } elif (i % 3 == 1) {
+        } elif i % 3 == 1 {
             last = counter.add(i)
         } else {
             last = counter.add(2)
         }
         print(counter.label())
-        i += 1
     }
     return last
 }
 
 pub main(): Int {
     c: Counter = Counter("primary", 10, 4)
-    last: Int = run_counter(c, 8)
-    print("last counter = " + to_str(last))
+    last = run_counter(c, 8)
+    print("last counter = {last}")
 
     acc: Accumulator = Accumulator()
-    i: Int = 1
-    loop {
-        if (i > 10) {
-            break
-        }
+    for i in 1..=10 {
         acc.push(i * i)
-        i += 1
     }
     print(acc.describe())
     c.reset(acc.average())

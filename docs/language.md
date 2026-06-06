@@ -4,6 +4,11 @@
 
 Suma-lang is a statically-typed language with explicit error handling via Result types. Recoverable errors are handled as values, while `throw` / `try` / `catch` exist for exceptional control flow.
 
+It is also a deliberately aggressive language. The syntax is allowed to omit
+keywords and boilerplate that SumaRoder considers low-value, so Suma programs may
+look more compact and opinionated than code in languages that preserve every
+traditional marker.
+
 ```suma
 pub main(): Int {
     print("Hello, World!")
@@ -15,9 +20,9 @@ That's your entry point. The function must return an `Int`, and `0` means succes
 
 ## Lexical Stuff
 
-Identifiers can start with a letter, underscore, or digit, then can use letters, numbers, and underscores. Case matters. A digit-only word is still a number, while a mixed word like `123abc` is an identifier.
+Identifiers start with a letter or underscore, then can use letters, numbers, and underscores. Case matters. Names cannot start with a digit, so `123abc` is rejected as an invalid numeric literal suffix.
 
-Keywords you can't use as names: `pub`, `pri`, `const`, `init`, `this`, `it`, `if`, `elif`, `else`, `while`, `for`, `in`, `loop`, `break`, `continue`, `return`, `import`, `static`, `is`, `class`, `throw`, `try`, `catch`, `finally`, `true`, `false`, `null`.
+Keywords and special names you can't use as ordinary expression names: `pub`, `pri`, `const`, `init`, `this`, `it`, `if`, `elif`, `else`, `while`, `for`, `in`, `loop`, `break`, `continue`, `return`, `import`, `static`, `is`, `enum`, `match`, `throw`, `try`, `catch`, `finally`, `true`, `false`, `null`.
 
 Comments work like this:
 
@@ -32,6 +37,19 @@ Comments work like this:
 
 Strings use double or single quotes, support escapes: `\n`, `\t`, `\\`, `\"`, `\'`.
 
+Strings interpolate expressions written between `{` and `}`:
+
+```suma
+name = "Alice"
+age = 30
+print("Hello, {name}!")               // Hello, Alice!
+print("name={name}, doubled={age * 2}")  // name=Alice, doubled=60
+```
+
+The expression inside `{...}` is parsed as a full Suma expression and
+stringified with `to_str` at runtime. To include a literal `{`, escape with
+`\{`. Prefix with `r"..."` to disable both escapes and interpolation.
+
 ## Types
 
 **Primitives:**
@@ -44,7 +62,10 @@ Strings use double or single quotes, support escapes: `\n`, `\t`, `\\`, `\"`, `\
 
 **Special types:**
 - `List` — growable list: `List(1, 2, 3)`
-- `R<T, E>` — Result type, generic: `R<Int, Str>`
+- `Result<T, E>` — generic result type. `R<T, E>` is the short alias.
+- `T?` — nullable shorthand for `Nullable<T>`, assignable from `T` or `null`.
+- `(A, B)` — fixed-length tuple type. Tuple values use `(a, b)` literals.
+- User-defined enums — sum types declared with `enum`.
 - `Function` — function values; `Function<Int, Str>` means one `Int` parameter returning `Str`
 
 Type annotations go after the name. Generic types use angle brackets and are invariant:
@@ -53,25 +74,57 @@ Type annotations go after the name. Generic types use angle brackets and are inv
 age: Int = 25
 name: Str = "Alice"
 items: List<Int> = List(1, 2, 3)
-result: R<Int, Str> = Ok(42)
+result: Result<Int, Str> = Ok(42)
+pair: (Int, Str) = (1, "two")
 ```
 
 ## Variables
 
-Declare with `pub` for global scope, `pri` for local-only:
+At the top level, `pub` explicitly exports a declaration from the module. `pri`
+marks it module-private. Leaving visibility off also makes it private:
 
 ```suma
 pub MAX_SIZE: Int = 100
-pri temp: Int = 0
+helper(): Int { return 1 }      // private by default
+pri temp: Int = 0               // explicitly private
 ```
 
-`pub` at the top level makes it visible everywhere. `pri` keeps it in the current scope.
+Inside a class, `pub` exposes a field or method and `pri` keeps it private to the
+class. Import declarations cannot be marked `pub` or `pri`.
 
-Inside functions, assigning to a missing name creates a local and infers its type:
+Inside functions, introduce locals with assignment or with a typed local
+declaration. Typed local declarations must include an initializer:
 
 ```suma
-count = 1        // inferred as Int
-name = "Suma"    // inferred as Str
+count = 1          // inferred as Int
+name = "Suma"      // inferred as Str
+typed: Int = 42    // explicit annotation
+```
+
+Bare assignment is scoped to the current block. If the name exists in the
+current block, it updates that local. If it does not, it creates a new local in
+the current block. To modify an outer local or a global, prefix the target with
+`@`:
+
+```suma
+count = 0
+loop {
+    @count += 1      // modifies the outer count
+    scratch = count  // creates/updates a loop-block local
+    if count >= 10 { break }
+}
+```
+
+Compound assignment and `++`/`--` follow the same rule: use `@name += value` or
+`@name++` when the target lives in an outer scope. Destructuring assignment also
+uses the current block, creating missing current-block locals instead of
+rewriting an outer binding:
+
+```suma
+(left, right) = (1, 2)
+a = 0;
+b = 0;
+(a, b) = (1, 2)
 ```
 
 ## Operators
@@ -89,9 +142,10 @@ Pretty much what you'd expect:
 **Assignment:** `=`, `+=`, `-=`, `*=`, `/=`, `%=`
 
 **Special stuff:**
-- `->` — lambda body marker and pattern match on Result
-- `?.` — safe call (returns null if error)
-- `?:` — Result Elvis operator (unwrap `Ok`, use default for `Err`)
+- `->` — lambda body marker
+- `=>` — pattern match arm separator in `match { ... }`
+- `?.` — safe member access or call (returns null for error/null receivers)
+- `else` — Result Elvis operator (unwrap `Ok`, use default for `Err`)
 - `??` — null coalescing operator
 - `?` — Result propagation operator
 - `[]` — index access
@@ -100,7 +154,7 @@ Pretty much what you'd expect:
 
 Operator precedence, lowest to highest:
 ```
-=  →  .. ..=  →  ?: ??  →  ||  →  &&  →  |  →  ^  →  &  →  == !=  →  < > <= >= is  →  << >>  →  + -  →  * / %  →  ! - ~  →  postfix (call, member, index, `?`, `?.`, `->`)
+=  →  .. ..=  →  else ??  →  ||  →  &&  →  |  →  ^  →  &  →  == !=  →  < > <= >= is  →  << >>  →  + -  →  * / %  →  ! - ~  →  postfix (call, member, index, `?`, `?.`)
 ```
 
 ## Control Flow
@@ -108,29 +162,59 @@ Operator precedence, lowest to highest:
 ### if/elif/else
 
 ```suma
-if (x > 0) {
+if x > 0 {
     print("positive")
-} elif (x < 0) {
+} elif x < 0 {
     print("negative")
 } else {
     print("zero")
 }
 ```
 
-### loop
+Parentheses around the condition are optional. The classic `if (cond) { ... }`
+form is still accepted for compatibility with older code.
 
-It's an infinite loop by default, you break out manually:
+### for/in
+
+`for` iterates over a range or a list:
 
 ```suma
-i: Int = 0
-loop {
-    if (i >= 10) break
-    print(to_str(i))
-    i += 1
+for i in 0..10 {           // half-open: 0, 1, …, 9
+    print(i)
+}
+
+for i in 0..=10 {          // inclusive: 0, 1, …, 10
+    print(i)
+}
+
+for item in items {        // any List
+    print(item)
 }
 ```
 
-`break` exits the loop, `continue` skips to the next iteration.
+### while
+
+```suma
+while i < n {
+    @i += 1
+}
+```
+
+### loop
+
+`loop` is an unconditional loop — break out manually. Prefer `for/in` when
+you're iterating a range; reach for `loop` only when neither `for` nor `while`
+fits.
+
+```suma
+loop {
+    line = read_line()
+    if line == "" { break }
+    print(line)
+}
+```
+
+`break` exits the innermost loop; `continue` jumps to the next iteration.
 
 ## Functions
 
@@ -150,11 +234,14 @@ pub greet(name: Str, greeting: Str = "Hello"): Str {
 }
 ```
 
+Parameters are optional at the call site only when they have a default value.
+`T?` means a nullable type; it does not make the parameter optional.
+
 Recursion is fine:
 
 ```suma
 pub factorial(n: Int): Int {
-    if (n <= 1) return 1
+    if n <= 1 { return 1 }
     return n * factorial(n - 1)
 }
 ```
@@ -173,7 +260,7 @@ result: Int = double(21)  // 42
 ```
 
 You can leave a callback as plain `Function` for dynamic call checking, or use
-`Function<Arg1, Arg2, Return>` to let the analyzer check calls statically:
+`Function<Arg1, Arg2, Return>` to the analyzer check calls statically:
 
 ```suma
 inc: Function<Int, Int> = (x: Int): Int -> x + 1
@@ -201,7 +288,7 @@ answer: Int = id(42)
 word: Str = id("suma")
 ```
 
-Function overloads are selected by parameter types, similar to Java overload resolution. Overload sets cannot use default/optional parameters, and overloads with the same erased generic signature are rejected:
+Function overloads are selected by parameter types, similar to Java overload resolution. Overload sets cannot use default parameters, and overloads with the same erased generic signature are rejected:
 
 ```suma
 pub size(value: Int): Int {
@@ -239,7 +326,7 @@ pub wrap_box(ctor: Function): Function {
 
 @wrap_box
 Box {
-    value: Int
+    pub value: Int
 
     init(value: Int) {
         this.value = value
@@ -254,25 +341,31 @@ Box {
 
 ## Classes
 
+Class declarations use `[pub|pri] Name { ... }`. There is no `class` keyword in
+class declarations, and `class` is available as an ordinary identifier where the
+grammar permits one.
+
 ```suma
 pub Person {
-    pri name: Str
-    pri age: Int
-    pub id: Int
+    name: Str            // private by default
+    age: Int
+    pub id: Int          // explicitly exposed
 
-    pub init(name: Str, age: Int) {
+    init(name: Str, age: Int) {
         this.name = name
         this.age = age
         this.id = 0
     }
 
     pub greet(): Str {
-        return "Hello, I'm " + this.name
+        return "Hello, I'm {this.name}"
     }
 }
 ```
 
-`pub` fields are accessible outside, `pri` are private. The `init` method is your constructor, called with `ClassName(args)`.
+Fields and methods default to private; mark with `pub` to expose them. The
+`init` method is the constructor — `Person("Alice", 25)` calls it. `init` is
+always callable from outside, so writing `pub init` is redundant.
 
 Classes can be generic and methods can be overloaded by parameter type:
 
@@ -323,37 +416,84 @@ pub Rectangle {
 `get` and `set` are contextual in class bodies, so ordinary methods like `pub get(): Int` remain valid.
 Use a separate backing field such as `_width`; assigning to `this.width` calls the setter.
 
-## Pattern Matching
+## Enums
 
-The `->` operator matches Results, runtime types, literal values, and `_` as a fallback:
+Enums define a closed set of variants. A variant can either be empty or carry
+one payload value:
 
 ```suma
-result -> {
-    Ok = handle_success(it)
-    Err = handle_error(it)
+enum Maybe {
+    Some(Int),
+    None
 }
 
-value -> {
-    is Box = it.value
-    "ready" = 1
-    _ = 0
+pub main(): Int {
+    value: Maybe = Maybe.Some(40)
+    return match value {
+        Maybe.Some => it + 2
+        Maybe.None => 0
+    }
 }
 ```
 
-For `Ok` and `Err`, `it` refers to the wrapped value. For type, literal, and `_` matches,
-`it` refers to the matched value itself.
+Construct empty variants with `Enum.Variant`. Construct payload variants with
+`Enum.Variant(value)`. In a `match` arm for a payload variant, `it` is the
+payload value. For an empty variant, `it` is the enum value itself.
+When the matched value has a known enum type, every variant must be covered
+unless the match includes a `_` fallback arm.
+
+## Pattern Matching
+
+Use `match` to branch on Results, enum variants, runtime types, literal values,
+and `_` as a fallback. This is the preferred form for new code:
+
+```suma
+match result {
+    Ok => handle_success(it)
+    Err => handle_error(it)
+}
+
+match value {
+    Maybe.Some => it + 1
+    Maybe.None => 0
+    is Box => it.value
+    "ready" => 1
+    _ => 0
+}
+```
+
+For `Ok`, `Err`, and payload enum variants, `it` refers to the wrapped value.
+For type, literal, and `_` matches, `it` refers to the matched value itself.
+Empty enum variants bind the enum value itself.
+
+You can give an arm an explicit binding by putting the name in parentheses after
+the pattern. If you omit the binding name, the default name is `it`:
+
+```suma
+match result {
+    Ok(value) => value + 1
+    Err(message) => {
+        print(message)
+        0
+    }
+}
+```
+
+The older postfix expression form `value -> { Ok = ..., Err = ... }` is not
+part of the language. Use `match value { ... => ... }`; `->` is only for
+lambdas.
 
 You can nest them:
 
 ```suma
-nested -> {
-    Ok = {
-        value -> {
-            Ok = print("Got: " + to_str(it))
-            Err = print("Inner error: " + it)
+match nested {
+    Ok => {
+        match value {
+            Ok => print("Got: " + to_str(it))
+            Err => print("Inner error: " + it)
         }
     }
-    Err = print("Outer error: " + it)
+    Err => print("Outer error: " + it)
 }
 ```
 
@@ -386,7 +526,9 @@ pub add(a: Str, b: Str): R<Int, Str> {
 }
 ```
 
-`throw` / `try` / `catch` / `finally` are available for exceptional control flow that does not fit Result-based recovery.
+`throw` / `try` / `catch` / `finally` are retained for exceptional control flow
+that does not fit Result-based recovery. Use `Result<T, E>` for ordinary
+recoverable errors.
 
 ## Imports
 
@@ -396,7 +538,7 @@ import "./utils.suma"             // relative to current file
 import "/absolute/path/module"    // absolute path
 import "my_module"                // search path
 import "py:math"                  // Python module
-import "py:numpy as np"           // import with alias
+import "py:json"                  // Python module
 ```
 
 Search order:
@@ -413,12 +555,19 @@ separator: `:` on Unix-like systems, `;` on Windows.
 
 The compiler catches circular imports and reports them.
 
+Python imports stay locked down unless the host allow-lists them through
+`SUMA_PY_IMPORTS`, for example `SUMA_PY_IMPORTS=math,json`.
+
+Only `pub` top-level declarations from imported Suma modules are visible to the
+importer. Private declarations still compile as module internals, so exported
+functions can call their private helpers without exposing those helper names.
+
 ## Special Syntax
 
-### Result Elvis Operator (?:)
+### Result Elvis Operator (else)
 
 ```suma
-result = left ?: right
+result = left else right
 // equivalent to:
 if (is_ok(left)) {
     result = left.value
@@ -426,6 +575,8 @@ if (is_ok(left)) {
     result = right
 }
 ```
+
+The old `?:` spelling is not accepted.
 
 ### Null Coalescing (??)
 
@@ -438,14 +589,17 @@ The right side is evaluated only when the left side is `null`.
 ### Safe Call (?.)
 
 ```suma
-result = obj?.method(args)
+result = obj?.method(args) ?? fallback
 // equivalent to:
-if (is_err(obj)) {
+if (is_err(obj) || obj == null) {
     result = null
 } else {
     result = obj.method(args)
 }
 ```
+
+When the receiver is a `Result` or nullable value, `?.` produces a nullable
+result. Use `??` or a null check before assigning it to a non-nullable type.
 
 ### Slicing
 
@@ -462,9 +616,9 @@ In pattern matching, `it` binds to the inner Result value for `Ok` and `Err`,
 or to the matched value for type, literal, and `_` arms:
 
 ```suma
-result -> {
-    Ok = print("Got: " + to_str(it))
-    Err = print("Failed: " + it)
+match result {
+    Ok => print("Got: " + to_str(it))
+    Err => print("Failed: " + it)
 }
 ```
 

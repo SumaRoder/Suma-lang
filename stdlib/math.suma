@@ -12,8 +12,8 @@ pub pow_int(base: Int, exp: Int): Int {
         if (i >= exp) {
             break
         }
-        result *= base
-        i += 1
+        @result *= base
+        @i += 1
     }
     return result
 }
@@ -26,8 +26,8 @@ pub gcd_int(a: Int, b: Int): Int {
             break
         }
         r = x % y
-        x = y
-        y = r
+        @x = y
+        @y = r
     }
     return x
 }
@@ -46,8 +46,8 @@ pub factorial_int(n: Int): Int {
         if (i > n) {
             break
         }
-        result *= i
-        i += 1
+        @result *= i
+        @i += 1
     }
     return result
 }
@@ -61,9 +61,9 @@ pub fib_int(n: Int): Int {
             break
         }
         next = a + b
-        a = b
-        b = next
-        i += 1
+        @a = b
+        @b = next
+        @i += 1
     }
     return a
 }

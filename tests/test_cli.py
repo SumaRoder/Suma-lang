@@ -29,8 +29,8 @@ pub sum_to(n: Int): Int {
     i: Int = 1
     loop {
         if (i > n) { break }
-        total += i
-        i += 1
+        @total += i
+        @i += 1
     }
     return total
 }
@@ -61,8 +61,8 @@ pub sum_to(n: Int): Int {
     i: Int = 1
     loop {
         if (i > n) { break }
-        total += i
-        i += 1
+        @total += i
+        @i += 1
     }
     return total
 }
@@ -105,6 +105,52 @@ pub main(): Int {
 """)
 
     _run_cli([], capsys=capsys, source_path=source_path, expected="ok")
+
+
+def test_cli_compile_then_execute_round_trip(tmp_path, capsys):
+    source_path = tmp_path / "main.suma"
+    output_path = tmp_path / "artifact.sumac"
+    source_path.write_text("""
+pub main(): Int {
+    print("round trip")
+    return 42
+}
+""")
+
+    cli.main(["compile", str(source_path), str(output_path)])
+    compiled = capsys.readouterr()
+    assert output_path.exists()
+    assert f"Compiled {source_path} -> {output_path}" in compiled.out
+    assert compiled.err.strip() == ""
+
+    cli.main(["execute", str(output_path)])
+    executed = capsys.readouterr()
+    assert executed.out.strip() == "round trip\n42".strip()
+    assert executed.err.strip() == ""
+
+
+def test_cli_import_path_flag_resolves_module(tmp_path, capsys):
+    module_dir = tmp_path / "modules"
+    module_dir.mkdir()
+    (module_dir / "custom_tools.suma").write_text("""
+pub triple(n: Int): Int {
+    return n * 3
+}
+""")
+
+    source_path = tmp_path / "main.suma"
+    source_path.write_text("""
+import "custom_tools"
+
+pub main(): Int {
+    return triple(14)
+}
+""")
+
+    cli.main(["-I", str(module_dir), "run", str(source_path)])
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "42"
+    assert captured.err.strip() == ""
 
 
 def test_cli_reports_runtime_errors_without_traceback(tmp_path, capsys):

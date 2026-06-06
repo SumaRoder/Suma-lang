@@ -21,6 +21,7 @@ from suma_lang.runtime.vm.py_interop import (
 )
 from suma_lang.runtime.vm.values import (
     SumaCallable,
+    SumaEnum,
     SumaErr,
     SumaLambda,
     SumaList,
@@ -29,6 +30,7 @@ from suma_lang.runtime.vm.values import (
     SumaOverload,
     SumaPyObject,
     SumaRange,
+    SumaTuple,
     _from_python_value,
     _to_python_value,
 )
@@ -39,11 +41,13 @@ __all__ = [
     "SumaOk",
     "SumaErr",
     "SumaList",
+    "SumaTuple",
     "SumaRange",
     "SumaObject",
     "SumaLambda",
     "SumaOverload",
     "SumaCallable",
+    "SumaEnum",
     "SumaPyObject",
 ]
 
@@ -51,7 +55,7 @@ _MISSING = object()
 
 
 class Frame:
-    __slots__ = ("func", "ip", "slots", "stack_base", "this", "it")
+    __slots__ = ("func", "ip", "slots", "stack_base", "this", "it", "pending_push")
 
     def __init__(self, func: Function, stack_base: int, this: Any = None) -> None:
         self.func = func
@@ -60,6 +64,7 @@ class Frame:
         self.stack_base = stack_base
         self.this = this
         self.it = None
+        self.pending_push: Any = None
 
 
 _isinstance = isinstance
@@ -111,8 +116,10 @@ class OC:
     RETURN = int(Op.RETURN)
     MAKE_LIST = int(Op.MAKE_LIST)
     MAKE_RANGE = int(Op.MAKE_RANGE)
+    MAKE_TUPLE = int(Op.MAKE_TUPLE)
     MAKE_OK = int(Op.MAKE_OK)
     MAKE_ERR = int(Op.MAKE_ERR)
+    MAKE_ENUM = int(Op.MAKE_ENUM)
     INDEX = int(Op.INDEX)
     SLICE = int(Op.SLICE)
     MEMBER = int(Op.MEMBER)
@@ -122,6 +129,7 @@ class OC:
     MAKE_LAMBDA = int(Op.MAKE_LAMBDA)
     IS_OK = int(Op.IS_OK)
     IS_ERR = int(Op.IS_ERR)
+    IS_ENUM_VARIANT = int(Op.IS_ENUM_VARIANT)
     UNWRAP_OK = int(Op.UNWRAP_OK)
     PRINT = int(Op.PRINT)
     NOP = int(Op.NOP)
@@ -178,7 +186,6 @@ class VM:
         self.frames: list[Frame] = []
         self.globals: dict[str, Any] = {}
         self._func_map: dict[str, int] = {}  # name -> function index
-        self._pending_push: Any = None  # object to push after init returns
         self._frame_pool: list[Frame] = []
         self._frame_pool_idx: int = 0
         self._index_functions()
@@ -196,7 +203,6 @@ class VM:
         self.program = program
         self.stack.clear()
         self.frames.clear()
-        self._pending_push = None
         self._frame_pool.clear()
         self._frame_pool_idx = 0
         if reset_globals:
@@ -387,6 +393,7 @@ class VM:
             f.stack_base = stack_base
             f.this = None
             f.it = None
+            f.pending_push = None
         else:
             f = Frame(func, stack_base)
             pool.append(f)
@@ -426,14 +433,15 @@ class VM:
         py_call = lambda callee, args: call_python(self, callee, args)  # noqa: E731
         call_overload = self._call_overload
         select_overload = self._select_overload
-        pending_push = self._pending_push
         frame_pool = self._frame_pool
         fpi = self._frame_pool_idx
 
         # Cache type checks
         _SumaOk = SumaOk
         _SumaErr = SumaErr
+        _SumaEnum = SumaEnum
         _SumaList = SumaList
+        _SumaTuple = SumaTuple
         _SumaRange = SumaRange
         _SumaObject = SumaObject
         _SumaLambda = SumaLambda
@@ -657,6 +665,7 @@ class VM:
                         nf.stack_base = sp
                         nf.this = None
                         nf.it = None
+                        nf.pending_push = None
                     else:
                         nf = Frame(fn2, sp)
                         nf.slots = new_slots
@@ -694,6 +703,7 @@ class VM:
                     frame.slots = new_slots
                     frame.this = None
                     frame.it = None
+                    frame.pending_push = None
                     fn = fn2
                     code = fn.code
                     code_len = len(code)
@@ -739,6 +749,7 @@ class VM:
                                 nf.stack_base = sp
                                 nf.this = None
                                 nf.it = None
+                                nf.pending_push = None
                             else:
                                 nf = Frame(fn2, sp)
                                 nf.slots = new_slots
@@ -799,6 +810,7 @@ class VM:
                             nf.stack_base = sp
                             nf.this = nf_this
                             nf.it = None
+                            nf.pending_push = None
                         else:
                             nf = Frame(fn2, sp)
                             nf.slots = new_slots
@@ -839,15 +851,14 @@ class VM:
                     val = stack[sp - 1]
                     sp = frame.stack_base
                     fpi -= 1
+                    completed_frame = frame
                     frames.pop()
                     if not frames:
                         self._frame_pool_idx = fpi
                         return val
-                    if pending_push is not None:
-                        stack[sp] = pending_push
+                    if completed_frame.pending_push is not None:
+                        stack[sp] = completed_frame.pending_push
                         sp += 1
-                        self._pending_push = None
-                        pending_push = None
                     else:
                         stack[sp] = val
                         sp += 1
@@ -979,6 +990,12 @@ class VM:
                     base = sp - count
                     stack[base] = _SumaList(stack[base:sp])
                     sp = base + 1
+                case OC.MAKE_TUPLE:
+                    count = code[ip]
+                    ip += 1
+                    base = sp - count
+                    stack[base] = _SumaTuple(stack[base:sp])
+                    sp = base + 1
                 case OC.MAKE_RANGE:
                     inclusive = bool(code[ip])
                     ip += 1
@@ -992,21 +1009,49 @@ class VM:
                     stack[sp - 1] = _SumaOk(stack[sp - 1])
                 case OC.MAKE_ERR:
                     stack[sp - 1] = _SumaErr(stack[sp - 1])
+                case OC.MAKE_ENUM:
+                    tag = constants[code[ip]]
+                    nargs = code[ip + 1]
+                    ip += 2
+                    enum_name, variant_name = tag.split(".", 1)
+                    base = sp - nargs
+                    value = stack[base] if nargs else None
+                    stack[base] = _SumaEnum(enum_name, variant_name, value)
+                    sp = base + 1
                 case OC.INDEX:
                     idx = stack[sp - 1]
                     obj = stack[sp - 2]
                     if _isinstance(obj, _SumaList):
                         if _isinstance(idx, int):
-                            stack[sp - 2] = obj.items[idx if idx >= 0 else len(obj.items) + idx]
+                            normalized = idx if idx >= 0 else len(obj.items) + idx
+                            if normalized < 0 or normalized >= len(obj.items):
+                                raise _VMError(f"List index {idx} out of range")
+                            stack[sp - 2] = obj.items[normalized]
                         else:
                             raise _VMError(f"List index must be Int, got {type(idx)}")
+                    elif _isinstance(obj, _SumaTuple):
+                        if _isinstance(idx, int):
+                            normalized = idx if idx >= 0 else len(obj.items) + idx
+                            if normalized < 0 or normalized >= len(obj.items):
+                                raise _VMError(f"Tuple index {idx} out of range")
+                            stack[sp - 2] = obj.items[normalized]
+                        else:
+                            raise _VMError(f"Tuple index must be Int, got {type(idx)}")
                     elif _isinstance(obj, _SumaRange):
                         if _isinstance(idx, int):
-                            stack[sp - 2] = obj[idx]
+                            try:
+                                stack[sp - 2] = obj[idx]
+                            except IndexError as err:
+                                raise _VMError(f"Range index {idx} out of range") from err
                         else:
                             raise _VMError(f"Range index must be Int, got {type(idx)}")
                     elif _isinstance(obj, str):
-                        stack[sp - 2] = obj[idx]
+                        if not _isinstance(idx, int):
+                            raise _VMError(f"Str index must be Int, got {type(idx)}")
+                        normalized = idx if idx >= 0 else len(obj) + idx
+                        if normalized < 0 or normalized >= len(obj):
+                            raise _VMError(f"Str index {idx} out of range")
+                        stack[sp - 2] = obj[normalized]
                     elif _isinstance(obj, _SumaPyObject):
                         stack[sp - 2] = py_index(obj, idx)
                     else:
@@ -1063,6 +1108,7 @@ class VM:
                                 nf.stack_base = sp
                                 nf.this = obj
                                 nf.it = None
+                                nf.pending_push = None
                             else:
                                 nf = Frame(getter_fn, sp)
                                 nf.slots = new_slots
@@ -1107,6 +1153,11 @@ class VM:
                             stack[sp - 1] = _SumaLambda(-1, [obj])
                         else:
                             raise _VMError(f"No member '{name}' on List")
+                    elif _isinstance(obj, _SumaTuple):
+                        if name == "size":
+                            stack[sp - 1] = len(obj.items)
+                        else:
+                            raise _VMError(f"No member '{name}' on Tuple")
                     elif _isinstance(obj, _SumaRange):
                         if name == "size":
                             stack[sp - 1] = len(obj)
@@ -1133,6 +1184,15 @@ class VM:
                             stack[sp - 1] = obj.value
                         else:
                             raise _VMError(f"Cannot access member '{name}' on Err")
+                    elif _isinstance(obj, _SumaEnum):
+                        if name == "value":
+                            stack[sp - 1] = obj.value
+                        elif name == "variant":
+                            stack[sp - 1] = obj.variant_name
+                        elif name == "enum":
+                            stack[sp - 1] = obj.enum_name
+                        else:
+                            raise _VMError(f"Cannot access member '{name}' on {obj.enum_name}")
                     elif _isinstance(obj, _SumaPyObject):
                         stack[sp - 1] = py_member(obj, name)
                     else:
@@ -1169,7 +1229,10 @@ class VM:
                     if _isinstance(obj, _SumaList):
                         if not _isinstance(idx, int):
                             raise _VMError(f"List index must be Int, got {type(idx)}")
-                        obj.items[idx if idx >= 0 else len(obj.items) + idx] = val
+                        normalized = idx if idx >= 0 else len(obj.items) + idx
+                        if normalized < 0 or normalized >= len(obj.items):
+                            raise _VMError(f"List index {idx} out of range")
+                        obj.items[normalized] = val
                     elif _isinstance(obj, _SumaPyObject):
                         obj.value[idx] = _to_python_value(val)
                     else:
@@ -1211,6 +1274,7 @@ class VM:
                             nf.stack_base = sp
                             nf.this = obj
                             nf.it = None
+                            nf.pending_push = None
                         else:
                             nf = Frame(init_fn, sp)
                             nf.slots = new_slots
@@ -1218,8 +1282,7 @@ class VM:
                             frame_pool.append(nf)
                         fpi += 1
                         frames.append(nf)
-                        self._pending_push = obj
-                        pending_push = obj
+                        nf.pending_push = obj
                         frame.ip = ip
                         frame = nf
                         fn = init_fn
@@ -1236,8 +1299,9 @@ class VM:
                 case OC.MAKE_LAMBDA:
                     func_idx = code[ip]
                     ip += 1
-                    capture_count = functions[func_idx].capture_count
-                    stack[sp] = _SumaLambda(func_idx, list(slots[:capture_count]))
+                    target_fn = functions[func_idx]
+                    capture_slots = target_fn.capture_slots or list(range(target_fn.capture_count))
+                    stack[sp] = _SumaLambda(func_idx, [slots[slot] for slot in capture_slots])
                     sp += 1
 
                 # Pattern matching
@@ -1246,6 +1310,15 @@ class VM:
                     sp += 1
                 case OC.IS_ERR:
                     stack[sp] = _isinstance(stack[sp - 1], _SumaErr)
+                    sp += 1
+                case OC.IS_ENUM_VARIANT:
+                    tag = constants[code[ip]]
+                    ip += 1
+                    value = stack[sp - 1]
+                    stack[sp] = (
+                        _isinstance(value, _SumaEnum)
+                        and f"{value.enum_name}.{value.variant_name}" == tag
+                    )
                     sp += 1
                 case OC.UNWRAP_OK:
                     val = stack[sp - 1]
@@ -1304,14 +1377,31 @@ class VM:
             if isinstance(idx, int):
                 if idx < 0:
                     idx += len(obj.items)
+                if idx < 0 or idx >= len(obj.items):
+                    raise VMError(f"List index {idx} out of range")
                 return obj.items[idx]
             raise VMError(f"List index must be Int, got {type(idx)}")
+        if isinstance(obj, SumaTuple):
+            if isinstance(idx, int):
+                if idx < 0:
+                    idx += len(obj.items)
+                if idx < 0 or idx >= len(obj.items):
+                    raise VMError(f"Tuple index {idx} out of range")
+                return obj.items[idx]
+            raise VMError(f"Tuple index must be Int, got {type(idx)}")
         if isinstance(obj, SumaRange):
             if isinstance(idx, int):
-                return obj[idx]
+                try:
+                    return obj[idx]
+                except IndexError as err:
+                    raise VMError(f"Range index {idx} out of range") from err
             raise VMError(f"Range index must be Int, got {type(idx)}")
         if isinstance(obj, str):
             if isinstance(idx, int):
+                if idx < 0:
+                    idx += len(obj)
+                if idx < 0 or idx >= len(obj):
+                    raise VMError(f"Str index {idx} out of range")
                 return obj[idx]
             raise VMError(f"Str index must be Int, got {type(idx)}")
         if isinstance(obj, SumaPyObject):
@@ -1357,6 +1447,10 @@ class VM:
             if name == "add":
                 return SumaLambda(-1, [obj])  # special built-in
             raise VMError(f"No member '{name}' on List")
+        if isinstance(obj, SumaTuple):
+            if name == "size":
+                return len(obj.items)
+            raise VMError(f"No member '{name}' on Tuple")
         if isinstance(obj, SumaRange):
             if name == "size":
                 return len(obj)
@@ -1375,6 +1469,14 @@ class VM:
             return obj.value
         if isinstance(obj, SumaErr) and name == "value":
             return obj.value
+        if isinstance(obj, SumaEnum):
+            if name == "value":
+                return obj.value
+            if name == "variant":
+                return obj.variant_name
+            if name == "enum":
+                return obj.enum_name
+            raise VMError(f"Cannot access member '{name}' on {obj.enum_name}")
         if isinstance(obj, SumaPyObject):
             return python_member(obj, name)
         raise VMError(f"Cannot access member '{name}' on {type(obj)}")

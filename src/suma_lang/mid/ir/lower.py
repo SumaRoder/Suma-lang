@@ -95,6 +95,7 @@ class FuncLowering:
         nested_functions: list[IRFunction] | None = None,
         next_func_idx: Callable[[str], int] | None = None,
         captured_locals: Sequence[str] | None = None,
+        capture_slots: Sequence[int] | None = None,
     ) -> None:
         self.func_name = func_name
         self.is_method = is_method
@@ -102,6 +103,8 @@ class FuncLowering:
         self.builder = IRBuilder()
         self.locals: dict[str, int] = {}
         self.local_count = 0
+        self._scope_names: list[set[str]] = [set()]
+        self._scope_shadows: list[list[tuple[str, int | None]]] = [[]]
         self._break_labels: list[Label] = []
         self._continue_labels: list[Label] = []
         self._string_pool: dict[str, int] = {}
@@ -115,22 +118,112 @@ class FuncLowering:
         self._decorated_classes: set[str] = set()
         self._overloaded_names: set[str] = set()
         self._global_names: set[str] = set()
+        self._enum_variants: dict[str, dict[str, str | None]] = {}
         self._nested_functions = nested_functions if nested_functions is not None else []
         self._next_func_idx = next_func_idx
         self._captured_locals = tuple(captured_locals or ())
+        self._capture_slots = tuple(
+            capture_slots if capture_slots is not None else range(len(self._captured_locals))
+        )
         self._lambda_counter = 0
         self._throw_handlers: list[tuple[int | None, Label]] = []
+        self._finally_bodies: list[BlockStmt] = []
+        self._finally_handler_depths: list[int] = []
 
     def add_local(self, name: str) -> int:
-        if name in self.locals:
+        current_scope = self._scope_names[-1]
+        if name in current_scope:
             return self.locals[name]
+        previous = self.locals.get(name)
+        self._scope_shadows[-1].append((name, previous))
         idx = self.local_count
         self.locals[name] = idx
+        current_scope.add(name)
         self.local_count += 1
         return idx
 
     def get_local(self, name: str) -> int | None:
         return self.locals.get(name)
+
+    def get_current_local(self, name: str) -> int | None:
+        if name not in self._scope_names[-1]:
+            return None
+        return self.locals.get(name)
+
+    def get_outer_local(self, name: str) -> int | None:
+        if name not in self._scope_names[-1]:
+            return self.locals.get(name)
+        for shadow_name, previous in reversed(self._scope_shadows[-1]):
+            if shadow_name == name:
+                return previous
+        return None
+
+    def reserve_local(self) -> int:
+        idx = self.local_count
+        self.local_count += 1
+        return idx
+
+    def bind_local(self, name: str, slot: int) -> int:
+        current_scope = self._scope_names[-1]
+        if name in current_scope:
+            return self.locals[name]
+        previous = self.locals.get(name)
+        self._scope_shadows[-1].append((name, previous))
+        self.locals[name] = slot
+        current_scope.add(name)
+        self.local_count = max(self.local_count, slot + 1)
+        return slot
+
+    def push_scope(self) -> None:
+        self._scope_names.append(set())
+        self._scope_shadows.append([])
+
+    def pop_scope(self) -> None:
+        if len(self._scope_names) == 1:
+            return
+        for name, previous in reversed(self._scope_shadows.pop()):
+            if previous is None:
+                self.locals.pop(name, None)
+            else:
+                self.locals[name] = previous
+        self._scope_names.pop()
+
+    def lower_block(self, block: BlockStmt) -> None:
+        self.push_scope()
+        try:
+            for stmt in block.statements:
+                self._lower_stmt(stmt)
+        finally:
+            self.pop_scope()
+
+    def _lower_active_finally(self) -> None:
+        saved_bodies = self._finally_bodies
+        saved_depths = self._finally_handler_depths
+        saved_handlers = self._throw_handlers
+        try:
+            for index in range(len(saved_bodies) - 1, -1, -1):
+                body = saved_bodies[index]
+                self._finally_bodies = saved_bodies[:index]
+                self._finally_handler_depths = saved_depths[:index]
+                self._throw_handlers = saved_handlers[: saved_depths[index]]
+                self.lower_block(body)
+        finally:
+            self._finally_bodies = saved_bodies
+            self._finally_handler_depths = saved_depths
+            self._throw_handlers = saved_handlers
+
+    def _lower_pending_throw(self, value_slot: int) -> None:
+        thrown = self.builder.new_reg("finally_throw")
+        self.builder.emit(LoadVar(dest=thrown, slot=value_slot, name="__finally_throw"))
+        if self._throw_handlers:
+            catch_slot, catch_label = self._throw_handlers[-1]
+            if catch_slot is not None:
+                self.builder.emit(StoreVar(src=thrown, slot=catch_slot, name="__catch"))
+            self.builder.emit(Jump(target=catch_label))
+            return
+        err = self.builder.new_reg("finally_err")
+        self.builder.emit(MakeErr(dest=err, value=thrown))
+        self.builder.emit(Return(value=err))
 
     def _const(self, value: object) -> int:
         key = (type(value), value)
@@ -169,8 +262,12 @@ class FuncLowering:
             for decl in global_vars:
                 self._lower_global_var(decl)
 
-        for stmt in func.body.statements:
-            self._lower_stmt(stmt)
+        self.push_scope()
+        try:
+            for stmt in func.body.statements:
+                self._lower_stmt(stmt)
+        finally:
+            self.pop_scope()
 
         last_block = self.builder.current
         if not last_block.instrs or not isinstance(last_block.instrs[-1], Return):
@@ -188,6 +285,7 @@ class FuncLowering:
             blocks=self.builder.blocks,
             locals_count=self.local_count,
             capture_count=len(self._captured_locals),
+            capture_slots=list(self._capture_slots),
             param_types=[param.type_annotation for param in func.params],
             type_params=list(func.type_params),
         )
@@ -211,10 +309,15 @@ class FuncLowering:
             else:
                 val = self.builder.new_reg("null")
                 self.builder.emit(LoadConst(dest=val, value=None))
+            if self._finally_bodies:
+                return_slot = self.add_local(f"__finally_return_{len(self.locals)}")
+                self.builder.emit(StoreVar(src=val, slot=return_slot, name="__finally_return"))
+                self._lower_active_finally()
+                val = self.builder.new_reg("finally_return")
+                self.builder.emit(LoadVar(dest=val, slot=return_slot, name="__finally_return"))
             self.builder.emit(Return(value=val))
         elif isinstance(stmt, BlockStmt):
-            for s in stmt.statements:
-                self._lower_stmt(s)
+            self.lower_block(stmt)
         elif isinstance(stmt, IfStmt):
             self._lower_if(stmt)
         elif isinstance(stmt, LoopStmt):
@@ -226,6 +329,7 @@ class FuncLowering:
         elif isinstance(stmt, BreakStmt):
             if not self._break_labels:
                 raise LowerError("'break' outside of loop")
+            self._lower_active_finally()
             self.builder.emit(Jump(target=self._break_labels[-1]))
             new_label = self.builder.new_label("after_break")
             new_block = self.builder.add_block(new_label)
@@ -233,6 +337,7 @@ class FuncLowering:
         elif isinstance(stmt, ContinueStmt):
             if not self._continue_labels:
                 raise LowerError("'continue' outside of loop")
+            self._lower_active_finally()
             self.builder.emit(Jump(target=self._continue_labels[-1]))
             new_label = self.builder.new_label("after_continue")
             new_block = self.builder.add_block(new_label)
@@ -255,6 +360,8 @@ class FuncLowering:
             self._lower_try_catch(stmt)
         elif isinstance(stmt, DestructureAssignStmt):
             self._lower_destructure_assignment(stmt)
+        elif isinstance(stmt, DestructureDeclStmt):
+            self._lower_destructure_declaration(stmt)
 
     def _lower_global_var(self, stmt: VarDecl) -> None:
         if not stmt.initializer:
@@ -275,11 +382,22 @@ class FuncLowering:
             self.builder.emit(LoadIndex(dest=item, obj=loaded, index=idx))
             self._store_identifier(target, item)
 
+    def _lower_destructure_declaration(self, stmt: DestructureDeclStmt) -> None:
+        value_slot = self.add_local(f"__destructure_value_{len(self.locals)}")
+        value = self._lower_expr(stmt.value)
+        self.builder.emit(StoreVar(src=value, slot=value_slot, name="__destructure_value"))
+        for index, target in enumerate(stmt.targets):
+            loaded = self.builder.new_reg("destructure")
+            self.builder.emit(LoadVar(dest=loaded, slot=value_slot, name="__destructure_value"))
+            idx = self.builder.new_reg("destructure_index")
+            self.builder.emit(LoadConst(dest=idx, value=index))
+            item = self.builder.new_reg(target)
+            self.builder.emit(LoadIndex(dest=item, obj=loaded, index=idx))
+            target_slot = self.add_local(target)
+            self.builder.emit(StoreVar(src=item, slot=target_slot, name=target))
+
     def _store_identifier(self, name: str, value: Operand) -> None:
-        slot = self.get_local(name)
-        if slot is None and name in self._global_names:
-            self.builder.emit(StoreGlobal(src=value, name=name))
-            return
+        slot = self.get_current_local(name)
         if slot is None:
             slot = self.add_local(name)
         self.builder.emit(StoreVar(src=value, slot=slot, name=name))
@@ -294,8 +412,7 @@ class FuncLowering:
 
         then_block = self.builder.add_block(self.builder.new_label("if.then"))
         self.builder.set_current(then_block)
-        for s in stmt.then_branch.statements:
-            self._lower_stmt(s)
+        self.lower_block(stmt.then_branch)
         self.builder.emit(Jump(target=end_label))
 
         for index, (elif_cond, elif_body) in enumerate(stmt.elif_branches):
@@ -311,16 +428,14 @@ class FuncLowering:
 
             body_block = self.builder.add_block(self.builder.new_label("elif.body"))
             self.builder.set_current(body_block)
-            for s in elif_body.statements:
-                self._lower_stmt(s)
+            self.lower_block(elif_body)
             self.builder.emit(Jump(target=end_label))
             next_label = following_label
 
         else_block = self.builder.add_block(next_label if not stmt.elif_branches else else_label)
         self.builder.set_current(else_block)
         if stmt.else_branch:
-            for s in stmt.else_branch.statements:
-                self._lower_stmt(s)
+            self.lower_block(stmt.else_branch)
         self.builder.emit(Jump(target=end_label))
 
         end_block = self.builder.add_block(end_label)
@@ -342,8 +457,7 @@ class FuncLowering:
 
         body_block = self.builder.add_block(body_label)
         self.builder.set_current(body_block)
-        for s in stmt.body.statements:
-            self._lower_stmt(s)
+        self.lower_block(stmt.body)
         self.builder.emit(Jump(target=continue_label))
 
         end_block = self.builder.add_block(end_label)
@@ -369,8 +483,7 @@ class FuncLowering:
 
         body_block = self.builder.add_block(body_label)
         self.builder.set_current(body_block)
-        for s in stmt.body.statements:
-            self._lower_stmt(s)
+        self.lower_block(stmt.body)
         self.builder.emit(Jump(target=cond_label))
 
         end_block = self.builder.add_block(end_label)
@@ -380,6 +493,10 @@ class FuncLowering:
         self._continue_labels.pop()
 
     def _lower_for_in(self, stmt: ForInStmt) -> None:
+        if isinstance(stmt.iterable, RangeExpr):
+            self._lower_for_range(stmt, stmt.iterable)
+            return
+        self.push_scope()
         iter_slot = self.add_local(f"__for_iter_{len(self.locals)}")
         index_slot = self.add_local(f"__for_index_{len(self.locals)}")
         item_slot = self.add_local(stmt.var_name)
@@ -420,8 +537,7 @@ class FuncLowering:
         item = self.builder.new_reg("for_item")
         self.builder.emit(LoadIndex(dest=item, obj=iter_value, index=index))
         self.builder.emit(StoreVar(src=item, slot=item_slot, name=stmt.var_name))
-        for s in stmt.body.statements:
-            self._lower_stmt(s)
+        self.lower_block(stmt.body)
         self.builder.emit(Jump(target=inc_label))
 
         inc_block = self.builder.add_block(inc_label)
@@ -440,6 +556,67 @@ class FuncLowering:
 
         self._break_labels.pop()
         self._continue_labels.pop()
+        self.pop_scope()
+
+    def _lower_for_range(self, stmt: ForInStmt, range_expr: RangeExpr) -> None:
+        self.push_scope()
+        index_slot = self.add_local(f"__for_index_{len(self.locals)}")
+        end_slot = self.add_local(f"__for_end_{len(self.locals)}")
+        item_slot = self.add_local(stmt.var_name)
+
+        start = self._lower_expr(range_expr.start)
+        self.builder.emit(StoreVar(src=start, slot=index_slot, name="__for_index"))
+        end = self._lower_expr(range_expr.end)
+        self.builder.emit(StoreVar(src=end, slot=end_slot, name="__for_end"))
+
+        cond_label = self.builder.new_label("for_range.cond")
+        body_label = self.builder.new_label("for_range.body")
+        inc_label = self.builder.new_label("for_range.inc")
+        end_label = self.builder.new_label("for_range.end")
+
+        self._break_labels.append(end_label)
+        self._continue_labels.append(inc_label)
+        self.builder.emit(Jump(target=cond_label))
+
+        cond_block = self.builder.add_block(cond_label)
+        self.builder.set_current(cond_block)
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        end_value = self.builder.new_reg("for_end")
+        self.builder.emit(LoadVar(dest=end_value, slot=end_slot, name="__for_end"))
+        keep_going = self.builder.new_reg("for_keep")
+        if range_expr.inclusive:
+            self.builder.emit(Le(dest=keep_going, left=index, right=end_value))
+        else:
+            self.builder.emit(Lt(dest=keep_going, left=index, right=end_value))
+        self.builder.emit(BranchFalse(cond=keep_going, target=end_label))
+        self.builder.emit(Jump(target=body_label))
+
+        body_block = self.builder.add_block(body_label)
+        self.builder.set_current(body_block)
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        self.builder.emit(StoreVar(src=index, slot=item_slot, name=stmt.var_name))
+        self.lower_block(stmt.body)
+        self.builder.emit(Jump(target=inc_label))
+
+        inc_block = self.builder.add_block(inc_label)
+        self.builder.set_current(inc_block)
+        index = self.builder.new_reg("for_index")
+        self.builder.emit(LoadVar(dest=index, slot=index_slot, name="__for_index"))
+        one = self.builder.new_reg("one")
+        self.builder.emit(LoadConst(dest=one, value=1))
+        next_index = self.builder.new_reg("for_next")
+        self.builder.emit(Add(dest=next_index, left=index, right=one))
+        self.builder.emit(StoreVar(src=next_index, slot=index_slot, name="__for_index"))
+        self.builder.emit(Jump(target=cond_label))
+
+        end_block = self.builder.add_block(end_label)
+        self.builder.set_current(end_block)
+
+        self._break_labels.pop()
+        self._continue_labels.pop()
+        self.pop_scope()
 
     def _lower_try_catch(self, stmt: TryCatchStmt) -> None:
         if stmt.finally_body:
@@ -448,11 +625,10 @@ class FuncLowering:
 
         end_label = self.builder.new_label("try.end")
         catch_label = self.builder.new_label("catch")
-        catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
+        catch_slot = self.reserve_local() if stmt.catch_body and stmt.catch_var else None
         if stmt.catch_body:
             self._throw_handlers.append((catch_slot, catch_label))
-        for s in stmt.try_body.statements:
-            self._lower_stmt(s)
+        self.lower_block(stmt.try_body)
         if stmt.catch_body:
             self._throw_handlers.pop()
         if stmt.catch_body:
@@ -460,8 +636,11 @@ class FuncLowering:
             catch_block = self.builder.add_block(catch_label)
             self.builder.set_current(catch_block)
         if stmt.catch_body:
-            for s in stmt.catch_body.statements:
-                self._lower_stmt(s)
+            self.push_scope()
+            if stmt.catch_var and catch_slot is not None:
+                self.bind_local(stmt.catch_var, catch_slot)
+            self.lower_block(stmt.catch_body)
+            self.pop_scope()
         if stmt.catch_body:
             self.builder.emit(Jump(target=end_label))
             end_block = self.builder.add_block(end_label)
@@ -476,40 +655,48 @@ class FuncLowering:
         throw_label = self.builder.new_label("finally.throw")
         normal_finally_label = self.builder.new_label("finally.normal")
         pending_throw_slot = self.add_local(f"__finally_throw_{len(self.locals)}")
-        catch_slot = self.add_local(stmt.catch_var) if stmt.catch_body and stmt.catch_var else None
+        catch_slot = self.reserve_local() if stmt.catch_body and stmt.catch_var else None
         handler_slot = catch_slot if stmt.catch_body else pending_throw_slot
         handler_label = catch_label if stmt.catch_body else throw_label
 
+        self._finally_handler_depths.append(len(self._throw_handlers))
         self._throw_handlers.append((handler_slot, handler_label))
-        for s in stmt.try_body.statements:
-            self._lower_stmt(s)
-        self._throw_handlers.pop()
+        self._finally_bodies.append(finally_body)
+        try:
+            self.lower_block(stmt.try_body)
+        finally:
+            self._finally_bodies.pop()
+            self._finally_handler_depths.pop()
+            self._throw_handlers.pop()
         self.builder.emit(Jump(target=normal_finally_label))
 
         catch_body = stmt.catch_body
         if catch_body is not None:
             catch_block = self.builder.add_block(catch_label)
             self.builder.set_current(catch_block)
+            self._finally_handler_depths.append(len(self._throw_handlers))
             self._throw_handlers.append((pending_throw_slot, throw_label))
-            for s in catch_body.statements:
-                self._lower_stmt(s)
-            self._throw_handlers.pop()
+            self._finally_bodies.append(finally_body)
+            try:
+                self.push_scope()
+                if stmt.catch_var and catch_slot is not None:
+                    self.bind_local(stmt.catch_var, catch_slot)
+                self.lower_block(catch_body)
+                self.pop_scope()
+            finally:
+                self._finally_bodies.pop()
+                self._finally_handler_depths.pop()
+                self._throw_handlers.pop()
             self.builder.emit(Jump(target=normal_finally_label))
 
         throw_block = self.builder.add_block(throw_label)
         self.builder.set_current(throw_block)
-        for s in finally_body.statements:
-            self._lower_stmt(s)
-        thrown = self.builder.new_reg("finally_throw")
-        self.builder.emit(LoadVar(dest=thrown, slot=pending_throw_slot, name="__finally_throw"))
-        err = self.builder.new_reg("finally_err")
-        self.builder.emit(MakeErr(dest=err, value=thrown))
-        self.builder.emit(Return(value=err))
+        self.lower_block(finally_body)
+        self._lower_pending_throw(pending_throw_slot)
 
         normal_block = self.builder.add_block(normal_finally_label)
         self.builder.set_current(normal_block)
-        for s in finally_body.statements:
-            self._lower_stmt(s)
+        self.lower_block(finally_body)
         self.builder.emit(Jump(target=end_label))
 
         end_block = self.builder.add_block(end_label)
@@ -547,6 +734,16 @@ class FuncLowering:
                 dest = self.builder.new_reg(expr.name)
                 self.builder.emit(LoadGlobal(dest=dest, name=expr.name))
                 return dest
+        elif isinstance(expr, OuterIdentifier):
+            slot = self.get_outer_local(expr.name)
+            dest = self.builder.new_reg(expr.name)
+            if slot is not None:
+                self.builder.emit(LoadVar(dest=dest, slot=slot, name=expr.name))
+            elif expr.name in self._global_names:
+                self.builder.emit(LoadGlobal(dest=dest, name=expr.name))
+            else:
+                raise LowerError(f"Cannot access undefined outer name '{expr.name}'")
+            return dest
         elif isinstance(expr, ThisExpr):
             dest = self.builder.new_reg("this")
             slot = self.get_local("this")
@@ -587,6 +784,14 @@ class FuncLowering:
         elif isinstance(expr, CallExpr):
             return self._lower_call(expr)
         elif isinstance(expr, MemberExpr):
+            tag = self._enum_variant_tag(expr)
+            if tag is not None:
+                expected = self._enum_variant_arity(tag)
+                if expected != 0:
+                    raise LowerError(f"Enum variant '{tag}' expects {expected} payload argument")
+                dest = self.builder.new_reg("enum")
+                self.builder.emit(MakeEnum(dest=dest, tag=tag, args=[]))
+                return dest
             obj = self._lower_expr(expr.obj)
             dest = self.builder.new_reg("member")
             self.builder.emit(LoadMember(dest=dest, obj=obj, member=expr.member))
@@ -608,6 +813,11 @@ class FuncLowering:
             elems = [self._lower_expr(e) for e in expr.elements]
             dest = self.builder.new_reg("list", IRType.LIST)
             self.builder.emit(MakeList(dest=dest, elements=elems))
+            return dest
+        elif isinstance(expr, TupleExpr):
+            elems = [self._lower_expr(e) for e in expr.elements]
+            dest = self.builder.new_reg("tuple", IRType.TUPLE)
+            self.builder.emit(MakeTuple(dest=dest, elements=elems))
             return dest
         elif isinstance(expr, OkExpr):
             val = self._lower_expr(expr.value)
@@ -672,15 +882,18 @@ class FuncLowering:
             info=expr.info,
         )
         param_names = {name for name, _ in expr.params}
+        captured = sorted(self.locals.items(), key=lambda item: item[1])
         captured_locals = [
             f"__capture_shadow_{slot}_{name}" if name in param_names else name
-            for name, slot in sorted(self.locals.items(), key=lambda item: item[1])
+            for name, slot in captured
         ]
+        capture_slots = [slot for _, slot in captured]
         lowering = FuncLowering(
             lambda_name,
             nested_functions=self._nested_functions,
             next_func_idx=self._next_func_idx,
             captured_locals=captured_locals,
+            capture_slots=capture_slots,
         )
         lowering._class_info = self._class_info
         lowering._func_name_to_idx = self._func_name_to_idx
@@ -688,6 +901,7 @@ class FuncLowering:
         lowering._decorated_classes = self._decorated_classes
         lowering._overloaded_names = self._overloaded_names
         lowering._global_names = self._global_names
+        lowering._enum_variants = self._enum_variants
         ir_func = lowering.lower(func_decl)
         setattr(ir_func, "reserved_func_idx", func_idx)  # noqa: B010 — dynamic attr
         self._nested_functions.append(ir_func)
@@ -772,13 +986,18 @@ class FuncLowering:
     def _lower_assign(self, expr: AssignExpr) -> Operand:
         val = self._lower_expr(expr.value)
         if isinstance(expr.target, Identifier):
-            slot = self.get_local(expr.target.name)
-            if slot is None and expr.target.name in self._global_names:
-                self.builder.emit(StoreGlobal(src=val, name=expr.target.name))
-                return val
+            slot = self.get_current_local(expr.target.name)
             if slot is None:
                 slot = self.add_local(expr.target.name)
             self.builder.emit(StoreVar(src=val, slot=slot, name=expr.target.name))
+        elif isinstance(expr.target, OuterIdentifier):
+            slot = self.get_outer_local(expr.target.name)
+            if slot is not None:
+                self.builder.emit(StoreVar(src=val, slot=slot, name=expr.target.name))
+            elif expr.target.name in self._global_names:
+                self.builder.emit(StoreGlobal(src=val, name=expr.target.name))
+            else:
+                raise LowerError(f"Cannot assign to undefined outer name '{expr.target.name}'")
         elif isinstance(expr.target, MemberExpr):
             obj = self._lower_expr(expr.target.obj)
             self.builder.emit(StoreMember(obj=obj, member=expr.target.member, value=val))
@@ -792,11 +1011,29 @@ class FuncLowering:
         op_map = {"+": Add, "-": Sub, "*": Mul, "/": Div, "%": Mod}
 
         if isinstance(expr.target, Identifier):
-            slot = self.get_local(expr.target.name)
+            slot = self.get_current_local(expr.target.name)
             if slot is not None:
                 left = self.builder.new_reg(expr.target.name)
                 self.builder.emit(LoadVar(dest=left, slot=slot, name=expr.target.name))
             else:
+                raise LowerError(
+                    f"Cannot compound-assign '{expr.target.name}' outside the current scope"
+                )
+            right = self._lower_expr(expr.value)
+            dest = self.builder.new_reg("compound")
+            op_cls = op_map.get(expr.op.rstrip("="))
+            if op_cls:
+                self.builder.emit(op_cls(dest=dest, left=left, right=right))
+            self.builder.emit(StoreVar(src=dest, slot=slot, name=expr.target.name))
+            return dest
+        elif isinstance(expr.target, OuterIdentifier):
+            slot = self.get_outer_local(expr.target.name)
+            left = self.builder.new_reg(expr.target.name)
+            if slot is not None:
+                self.builder.emit(LoadVar(dest=left, slot=slot, name=expr.target.name))
+            else:
+                if expr.target.name not in self._global_names:
+                    raise LowerError(f"Cannot assign to undefined outer name '{expr.target.name}'")
                 left = self.builder.new_reg(expr.target.name)
                 self.builder.emit(LoadGlobal(dest=left, name=expr.target.name))
             right = self._lower_expr(expr.value)
@@ -835,6 +1072,19 @@ class FuncLowering:
         return self._lower_expr(expr.value)
 
     def _lower_call(self, expr: CallExpr) -> Operand:
+        if isinstance(expr.callee, MemberExpr):
+            tag = self._enum_variant_tag(expr.callee)
+            if tag is not None:
+                expected = self._enum_variant_arity(tag)
+                if len(expr.args) != expected:
+                    raise LowerError(
+                        f"Enum variant '{tag}' expects {expected} args, got {len(expr.args)}"
+                    )
+                args = [self._lower_expr(arg) for arg in expr.args]
+                dest = self.builder.new_reg("enum")
+                self.builder.emit(MakeEnum(dest=dest, tag=tag, args=args))
+                return dest
+
         if isinstance(expr.callee, Identifier) and expr.callee.name in self._class_info:
             init = self._class_init_decls.get(expr.callee.name)
             args = self._lower_args(expr.args, init.params if init else None)
@@ -1045,6 +1295,10 @@ class FuncLowering:
                 check = self.builder.new_reg("is_type")
                 self.builder.emit(Call(dest=check, callee=callee, args=[scrutinee, type_name]))
                 self.builder.emit(BranchFalse(cond=check, target=next_label))
+            elif pattern.kind == "enum":
+                check = self.builder.new_reg("is_enum")
+                self.builder.emit(IsEnumVariant(dest=check, src=scrutinee, tag=str(pattern.value)))
+                self.builder.emit(BranchFalse(cond=check, target=next_label))
             elif pattern.kind == "literal":
                 literal = self._lower_match_literal(pattern.value)  # type: ignore[arg-type]
                 check = self.builder.new_reg("match_eq")
@@ -1055,14 +1309,32 @@ class FuncLowering:
                 value = self.builder.new_reg("it")
                 self.builder.emit(LoadMember(dest=value, obj=scrutinee, member="value"))
                 self.builder.emit(SetIt(src=value))
+            elif pattern.kind == "enum":
+                if self._enum_variant_arity(str(pattern.value)) > 0:
+                    value = self.builder.new_reg("it")
+                    self.builder.emit(LoadMember(dest=value, obj=scrutinee, member="value"))
+                    self.builder.emit(SetIt(src=value))
+                else:
+                    self.builder.emit(SetIt(src=scrutinee))
             elif pattern.kind in ("type", "literal", "wildcard"):
                 self.builder.emit(SetIt(src=scrutinee))
+            binding_scope = arm.binding is not None and arm.binding != "it"
+            if binding_scope:
+                self.push_scope()
+                binding_slot = self.add_local(arm.binding or "it")
+                bound_value = self.builder.new_reg(arm.binding or "it")
+                self.builder.emit(LoadIt(dest=bound_value))
+                self.builder.emit(
+                    StoreVar(src=bound_value, slot=binding_slot, name=arm.binding or "it")
+                )
             if isinstance(arm.body, BlockStmt):
                 value = self._lower_block_value(arm.body)
                 self.builder.emit(StoreVar(src=value, slot=result_slot, name="__match_result"))
             else:
                 value = self._lower_expr(arm.body)
                 self.builder.emit(StoreVar(src=value, slot=result_slot, name="__match_result"))
+            if binding_scope:
+                self.pop_scope()
             restored_it = self.builder.new_reg("restore_it")
             self.builder.emit(
                 LoadVar(dest=restored_it, slot=saved_it_slot, name="__match_saved_it")
@@ -1136,16 +1408,20 @@ class FuncLowering:
         return dest
 
     def _lower_block_value(self, block: BlockStmt) -> Operand:
+        self.push_scope()
         statements = list(block.statements)
-        if statements and isinstance(statements[-1], ExprStmt):
-            for stmt in statements[:-1]:
+        try:
+            if statements and isinstance(statements[-1], ExprStmt):
+                for stmt in statements[:-1]:
+                    self._lower_stmt(stmt)
+                return self._lower_expr(statements[-1].expr)
+            for stmt in statements:
                 self._lower_stmt(stmt)
-            return self._lower_expr(statements[-1].expr)
-        for stmt in statements:
-            self._lower_stmt(stmt)
-        null_reg = self.builder.new_reg("null")
-        self.builder.emit(LoadConst(dest=null_reg, value=None))
-        return null_reg
+            null_reg = self.builder.new_reg("null")
+            self.builder.emit(LoadConst(dest=null_reg, value=None))
+            return null_reg
+        finally:
+            self.pop_scope()
 
     def _lower_match_literal(self, pattern: Expr | str | None) -> Operand:
         if isinstance(pattern, Identifier):
@@ -1156,10 +1432,30 @@ class FuncLowering:
             return Immediate(pattern)
         return self._lower_expr(pattern)
 
+    def _enum_variant_tag(self, member: MemberExpr) -> str | None:
+        if not isinstance(member.obj, Identifier):
+            return None
+        if self.get_local(member.obj.name) is not None:
+            return None
+        variants = self._enum_variants.get(member.obj.name)
+        if variants is None or member.member not in variants:
+            return None
+        return f"{member.obj.name}.{member.member}"
+
+    def _enum_variant_arity(self, tag: str) -> int:
+        enum_name, variant_name = tag.split(".", 1)
+        payload_type = self._enum_variants.get(enum_name, {}).get(variant_name)
+        return 1 if payload_type is not None else 0
+
 
 def lower_to_ir(ast: Program) -> IRProgram:
     """Lower an AST program to IR."""
     program = IRProgram(py_imports=dict(ast.py_imports))
+    program.enums = {
+        decl.name: {variant.name: variant.payload_type for variant in decl.variants}
+        for decl in ast.declarations
+        if isinstance(decl, EnumDecl)
+    }
     program.decorated_functions = [
         decl for decl in ast.declarations if isinstance(decl, FunctionDecl) and decl.decorators
     ]
@@ -1284,6 +1580,7 @@ def lower_to_ir(ast: Program) -> IRProgram:
             lowering._decorated_classes = decorated_classes
             lowering._overloaded_names = overloaded_names
             lowering._global_names = global_names
+            lowering._enum_variants = program.enums
             ir_func = lowering.lower(decl, global_vars if decl.name == "main" else None)
             func_idx = len(program.functions)
             program.functions.append(ir_func)
@@ -1336,6 +1633,7 @@ def lower_to_ir(ast: Program) -> IRProgram:
                 lowering._decorated_classes = decorated_classes
                 lowering._overloaded_names = overloaded_names
                 lowering._global_names = global_names
+                lowering._enum_variants = program.enums
                 ir_func = lowering.lower(method)
                 func_idx = len(program.functions)
                 program.functions.append(ir_func)

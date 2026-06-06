@@ -20,7 +20,7 @@ seed: Int
 result: Int
 
 pub main(): Int {
-    result = seed + 2
+    @result = seed + 2
     return result
 }
 """

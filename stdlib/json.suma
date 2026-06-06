@@ -7,55 +7,55 @@ pub json_escape(s: Str): Str {
         }
         ch: Str = s[i]
         if (ch == "\\") {
-            result = result + "\\\\"
+            @result = result + "\\\\"
         } elif (ch == "\"") {
-            result = result + "\\\""
+            @result = result + "\\\""
         } elif (ch == "\n") {
-            result = result + "\\n"
+            @result = result + "\\n"
         } elif (ch == "\t") {
-            result = result + "\\t"
+            @result = result + "\\t"
         } elif (ch == "\r") {
-            result = result + "\\r"
+            @result = result + "\\r"
         } else {
-            result = result + ch
+            @result = result + ch
         }
-        i += 1
+        @i += 1
     }
     return result
 }
 
-pub to_json(value: Any): R {
+pub to_json(value: Any): R<Str, Str> {
     return Err("to_json(Any) is not supported in static mode; use a typed to_json_* function")
 }
 
-pub json_pretty(value: Any): R {
+pub json_pretty(value: Any): R<Str, Str> {
     return to_json(value)
 }
 
-pub to_json_str(value: Str): R {
+pub to_json_str(value: Str): R<Str, Str> {
     return Ok("\"" + json_escape(value) + "\"")
 }
 
-pub to_json_int(value: Int): R {
+pub to_json_int(value: Int): R<Str, Str> {
     return Ok(to_str(value))
 }
 
-pub to_json_float(value: Float): R {
+pub to_json_float(value: Float): R<Str, Str> {
     return Ok(to_str(value))
 }
 
-pub to_json_bool(value: Bool): R {
+pub to_json_bool(value: Bool): R<Str, Str> {
     if (value) {
         return Ok("true")
     }
     return Ok("false")
 }
 
-pub to_json_null(): R {
+pub to_json_null(): R<Str, Str> {
     return Ok("null")
 }
 
-pub from_json(json_str: Str): R {
+pub from_json(json_str: Str): R<Str, Str> {
     return Ok(json_str)
 }
 
@@ -80,7 +80,7 @@ pub JsonObject {
             if (pair[0] == key) {
                 return pair[1]
             }
-            i += 1
+            @i += 1
         }
         return ""
     }
@@ -93,7 +93,7 @@ pub JsonObject {
                 break
             }
             result.add(this.pairs[i][0])
-            i += 1
+            @i += 1
         }
         return result
     }
@@ -107,7 +107,7 @@ pub JsonObject {
             if (this.pairs[i][0] == key) {
                 return true
             }
-            i += 1
+            @i += 1
         }
         return false
     }

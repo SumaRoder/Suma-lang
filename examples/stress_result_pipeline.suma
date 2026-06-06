@@ -17,23 +17,23 @@ pub parse_three(a: Str, b: Str, c: Str) {
     db: R = parse_digit(b)
     dc: R = parse_digit(c)
 
-    da -> {
+    match da {
         Err {
             return Err(it)
         }
-        Ok = print("first digit = " + to_str(it))
+        Ok => print("first digit = " + to_str(it))
     }
-    db -> {
+    match db {
         Err {
             return Err(it)
         }
-        Ok = print("second digit = " + to_str(it))
+        Ok => print("second digit = " + to_str(it))
     }
-    dc -> {
+    match dc {
         Err {
             return Err(it)
         }
-        Ok = print("third digit = " + to_str(it))
+        Ok => print("third digit = " + to_str(it))
     }
 
     va: Int = unwrap(da)
@@ -51,41 +51,41 @@ pub safe_divide(a: Int, b: Int) {
 
 pub pipeline(a: Str, b: Str, c: Str, divisor: Int) {
     parsed: R = parse_three(a, b, c)
-    parsed -> {
+    match parsed {
         Err {
             return Err("parse failed: " + it)
         }
-        Ok = print("parsed number = " + to_str(it))
+        Ok => print("parsed number = " + to_str(it))
     }
 
     n: Int = unwrap(parsed)
     divided: R = safe_divide(n, divisor)
-    divided -> {
+    match divided {
         Err {
             return Err("division failed: " + it)
         }
-        Ok = print("division result = " + to_str(it))
+        Ok => print("division result = " + to_str(it))
     }
     return divided
 }
 
 pub main(): Int {
     ok_result: R = pipeline("4", "2", "0", 7)
-    ok_result -> {
-        Ok = print("pipeline ok = " + to_str(it))
-        Err = print("pipeline err = " + it)
+    match ok_result {
+        Ok => print("pipeline ok = " + to_str(it))
+        Err => print("pipeline err = " + it)
     }
 
     bad_parse: R = pipeline("9", "x", "1", 3)
-    bad_parse -> {
-        Ok = print("bad parse unexpectedly ok = " + to_str(it))
-        Err = print("bad parse expected err = " + it)
+    match bad_parse {
+        Ok => print("bad parse unexpectedly ok = " + to_str(it))
+        Err => print("bad parse expected err = " + it)
     }
 
     bad_div: R = pipeline("1", "2", "0", 0)
-    bad_div -> {
-        Ok = print("bad div unexpectedly ok = " + to_str(it))
-        Err = print("bad div expected err = " + it)
+    match bad_div {
+        Ok => print("bad div unexpectedly ok = " + to_str(it))
+        Err => print("bad div expected err = " + it)
     }
 
     return 0

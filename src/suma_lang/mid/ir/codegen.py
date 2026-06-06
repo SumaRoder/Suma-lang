@@ -38,6 +38,7 @@ class CodeGenerator:
     def generate(self, ir_program: IRProgram) -> ProgramBytecode:
         """Generate bytecode from an IR program."""
         self.program.classes = ir_program.classes
+        self.program.enums = ir_program.enums
         self.program.py_imports = dict(ir_program.py_imports)
         self.program.overloads = dict(ir_program.overloads)
 
@@ -141,6 +142,7 @@ class CodeGenerator:
             is_method=ir_func.is_method,
             class_name=ir_func.class_name,
             capture_count=ir_func.capture_count,
+            capture_slots=list(ir_func.capture_slots),
             param_types=list(ir_func.param_types),
             type_params=list(ir_func.type_params),
         )
@@ -223,7 +225,7 @@ class CodeGenerator:
             )
         if isinstance(instr, CallGlobal):
             return sum(self._operand_size(a) for a in instr.args) + 2 + self._dest_spill_size()
-        if isinstance(instr, MakeList):
+        if isinstance(instr, (MakeList, MakeTuple)):
             return sum(self._operand_size(e) for e in instr.elements) + 2 + self._dest_spill_size()
         if isinstance(instr, MakeRange):
             return (
@@ -234,6 +236,8 @@ class CodeGenerator:
             )
         if isinstance(instr, (MakeOk, MakeErr)):
             return self._operand_size(instr.value) + 1 + self._dest_spill_size()
+        if isinstance(instr, MakeEnum):
+            return sum(self._operand_size(arg) for arg in instr.args) + 3 + self._dest_spill_size()
         if isinstance(instr, MakeLambda):
             return 2 + self._dest_spill_size()
         if isinstance(instr, MakeObject):
@@ -265,6 +269,8 @@ class CodeGenerator:
             return size
         if isinstance(instr, (IsOk, IsErr)):
             return self._operand_size(instr.src) + 5
+        if isinstance(instr, IsEnumVariant):
+            return self._operand_size(instr.src) + 6
         if isinstance(instr, UnwrapOk):
             return self._operand_size(instr.src) + 1 + self._dest_spill_size()
         if isinstance(instr, SetIt):
@@ -405,6 +411,12 @@ class CodeGenerator:
             fn.code.append(int(Op.MAKE_LIST))
             fn.code.append(len(instr.elements))
             self._spill_dest(instr.dest, fn)
+        elif isinstance(instr, MakeTuple):
+            for elem in instr.elements:
+                self._load_operand(elem, fn)
+            fn.code.append(int(Op.MAKE_TUPLE))
+            fn.code.append(len(instr.elements))
+            self._spill_dest(instr.dest, fn)
         elif isinstance(instr, MakeRange):
             self._load_operand(instr.start, fn)
             self._load_operand(instr.end, fn)
@@ -418,6 +430,13 @@ class CodeGenerator:
         elif isinstance(instr, MakeErr):
             self._load_operand(instr.value, fn)
             fn.code.append(int(Op.MAKE_ERR))
+            self._spill_dest(instr.dest, fn)
+        elif isinstance(instr, MakeEnum):
+            for arg in instr.args:
+                self._load_operand(arg, fn)
+            fn.code.append(int(Op.MAKE_ENUM))
+            fn.code.append(self._string_const(instr.tag))
+            fn.code.append(len(instr.args))
             self._spill_dest(instr.dest, fn)
         elif isinstance(instr, MakeLambda):
             fn.code.append(int(Op.MAKE_LAMBDA))
@@ -470,6 +489,12 @@ class CodeGenerator:
             self._emit_predicate(instr.src, instr.dest, Op.IS_OK, fn)
         elif isinstance(instr, IsErr):
             self._emit_predicate(instr.src, instr.dest, Op.IS_ERR, fn)
+        elif isinstance(instr, IsEnumVariant):
+            self._load_operand(instr.src, fn)
+            fn.code.append(int(Op.IS_ENUM_VARIANT))
+            fn.code.append(self._string_const(instr.tag))
+            self._spill_dest(instr.dest, fn)
+            fn.code.append(int(Op.POP))
         elif isinstance(instr, UnwrapOk):
             self._load_operand(instr.src, fn)
             fn.code.append(int(Op.UNWRAP_OK))

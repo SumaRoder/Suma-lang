@@ -6,7 +6,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
-    { name = "Suma-lang Contributors" },
+    { name = "SumaRoder", email = "1493813167@qq.com" },
 ]
 keywords = ["programming-language", "compiler", "vm", "bytecode"]
 classifiers = [
@@ -39,6 +39,8 @@ Homepage = "https://github.com/SumaRoder/suma-lang"
 Repository = "https://github.com/SumaRoder/suma-lang"
 Issues = "https://github.com/SumaRoder/suma-lang/issues"
 Documentation = "https://SumaRoder.github.io/suma-lang/"
+QQ = "https://qm.qq.com/q/glXT2rJOa4" # 1493813167
+"QQ Group" = "https://qm.qq.com/q/SnY4eGn7iu" # 1104802947
 
 [build-system]
 requires = ["hatchling"]
@@ -77,5 +79,5 @@ dev = [
     "pyright>=1.1.0",
     "pytest>=9.0.3",
     "pytest-cov>=5.0.0",
-    "pip-audit"
+    "pip-audit>=2.0"
 ]

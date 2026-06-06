@@ -44,6 +44,12 @@ class Identifier:
 
 
 @dataclass(frozen=True)
+class OuterIdentifier:
+    name: str
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class ThisExpr:
     info: TokenInfo
 
@@ -128,6 +134,12 @@ class ListExpr:
 
 
 @dataclass(frozen=True)
+class TupleExpr:
+    elements: Sequence[Expr]
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class OkExpr:
     value: Expr
     info: TokenInfo
@@ -149,7 +161,7 @@ class LambdaExpr:
 
 @dataclass(frozen=True)
 class ElvExpr:
-    """Elvis operator: left ?: right"""
+    """Elvis operator: left else right"""
 
     left: Expr
     right: Expr
@@ -194,7 +206,7 @@ class SafeMemberExpr:
 
 @dataclass(frozen=True)
 class PatternMatchExpr:
-    """Arrow match: value -> { ... }"""
+    """Pattern match: match value { ... }."""
 
     scrutinee: Expr
     arms: Sequence[MatchArm]
@@ -220,13 +232,14 @@ class RangeExpr:
 
 @dataclass(frozen=True)
 class MatchPattern:
-    kind: str  # "result", "type", "literal", or "wildcard"
+    kind: str  # "result", "type", "enum", "literal", or "wildcard"
     value: Expr | str | None
 
 
 @dataclass(frozen=True)
 class MatchArm:
     pattern: MatchPattern
+    binding: str | None
     body: Expr | BlockStmt
     info: TokenInfo
 
@@ -238,6 +251,7 @@ Expr = (
     | BoolLiteral
     | NullLiteral
     | Identifier
+    | OuterIdentifier
     | ThisExpr
     | ItExpr
     | UnaryExpr
@@ -250,6 +264,7 @@ Expr = (
     | IndexExpr
     | SliceExpr
     | ListExpr
+    | TupleExpr
     | OkExpr
     | ErrExpr
     | LambdaExpr
@@ -356,6 +371,13 @@ class DestructureAssignStmt:
     info: TokenInfo
 
 
+@dataclass(frozen=True)
+class DestructureDeclStmt:
+    targets: Sequence[str]
+    value: Expr
+    info: TokenInfo
+
+
 Stmt = (
     ExprStmt
     | VarDecl
@@ -370,6 +392,7 @@ Stmt = (
     | ThrowStmt
     | TryCatchStmt
     | DestructureAssignStmt
+    | DestructureDeclStmt
 )
 
 
@@ -432,12 +455,27 @@ class ClassDecl:
 
 
 @dataclass(frozen=True)
+class EnumVariantDecl:
+    name: str
+    payload_type: str | None
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
+class EnumDecl:
+    name: str
+    variants: Sequence[EnumVariantDecl]
+    is_pub: bool
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class ImportDecl:
     path: str
     info: TokenInfo
 
 
-TopLevel = FunctionDecl | ClassDecl | VarDecl | ImportDecl
+TopLevel = FunctionDecl | ClassDecl | EnumDecl | VarDecl | ImportDecl
 
 
 @dataclass

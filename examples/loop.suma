@@ -1,11 +1,9 @@
 pub main(): Int {
-    i: Int = 0
-    loop {
-        i += 1
-        if (i == 5 || i > 10) {
+    for i in 1..=10 {
+        if i == 5 {
             break
         }
-        print("i = " + to_str(i))
+        print("i = {i}")
     }
     return 0
 }

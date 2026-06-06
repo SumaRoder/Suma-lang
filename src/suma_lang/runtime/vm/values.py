@@ -48,6 +48,19 @@ class SumaList:
         return len(self.items)
 
 
+class SumaTuple:
+    __slots__ = ("items",)
+
+    def __init__(self, items: list | tuple) -> None:
+        self.items = tuple(items)
+
+    def __repr__(self) -> str:
+        return f"Tuple({', '.join(repr(i) for i in self.items)})"
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+
 class SumaRange:
     __slots__ = ("start", "end", "inclusive")
 
@@ -81,6 +94,28 @@ class SumaObject:
 
     def __repr__(self) -> str:
         return f"{self.class_name}({self.fields!r})"
+
+
+class SumaEnum:
+    __slots__ = ("enum_name", "variant_name", "value")
+
+    def __init__(self, enum_name: str, variant_name: str, value: Any = None) -> None:
+        self.enum_name = enum_name
+        self.variant_name = variant_name
+        self.value = value
+
+    def __repr__(self) -> str:
+        if self.value is None:
+            return f"{self.enum_name}.{self.variant_name}"
+        return f"{self.enum_name}.{self.variant_name}({self.value!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, SumaEnum)
+            and self.enum_name == other.enum_name
+            and self.variant_name == other.variant_name
+            and self.value == other.value
+        )
 
 
 class SumaLambda:
@@ -184,6 +219,8 @@ def _to_python_value(value: Any) -> Any:
         return value
     if isinstance(value, SumaList):
         return [_to_python_value(item) for item in value.items]
+    if isinstance(value, SumaTuple):
+        return tuple(_to_python_value(item) for item in value.items)
     if isinstance(value, SumaRange):
         return range(value.start, value.end + (1 if value.inclusive else 0))
     if isinstance(value, SumaOk):
@@ -192,6 +229,12 @@ def _to_python_value(value: Any) -> Any:
         return {"err": _to_python_value(value.value)}
     if isinstance(value, SumaObject):
         return {key: _to_python_value(val) for key, val in value.fields.items()}
+    if isinstance(value, SumaEnum):
+        return {
+            "enum": value.enum_name,
+            "variant": value.variant_name,
+            "value": _to_python_value(value.value),
+        }
     return value
 
 
@@ -207,15 +250,19 @@ def _from_python_value(value: Any) -> Any:
             SumaLambda,
             SumaOverload,
             SumaList,
+            SumaTuple,
             SumaRange,
             SumaOk,
             SumaErr,
             SumaObject,
+            SumaEnum,
         ),
     ):
         return value
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list):
         return SumaList([_from_python_value(item) for item in value])
+    if isinstance(value, tuple):
+        return SumaTuple([_from_python_value(item) for item in value])
     return SumaPyObject(value)

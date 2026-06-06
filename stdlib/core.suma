@@ -37,8 +37,8 @@ pub repeat_str(s: Str, count: Int): Str {
         if (i >= count) {
             break
         }
-        result = result + s
-        i += 1
+        @result = result + s
+        @i += 1
     }
     return result
 }

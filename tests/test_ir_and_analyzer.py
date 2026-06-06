@@ -1,5 +1,4 @@
 import inspect
-import json
 import struct
 import sys
 from contextlib import redirect_stdout
@@ -11,19 +10,19 @@ from suma_lang.backend.codegen.compiler import Compiler
 from suma_lang.backend.codegen.serializer import (
     MAGIC,
     VERSION,
-    _encode_constants,
     deserialize,
     serialize,
 )
 from suma_lang.frontend.lexer.token_types import TokenType
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
+from suma_lang.frontend.parser.ast_nodes import ElvExpr, Identifier, NullCoalesceExpr
 from suma_lang.frontend.parser.parser import ParseError, Parser
 from suma_lang.frontend.semantic.analyzer import Analyzer
 from suma_lang.mid.ir.codegen import CodegenError, ir_to_bytecode
 from suma_lang.mid.ir.ir import BasicBlock, IRFunction, IRProgram, Label, Return, VirtualReg
 from suma_lang.mid.ir.lower import lower_to_ir
 from suma_lang.mid.ir.optimizer import optimize_ir
-from suma_lang.runtime.vm.vm import VM, SumaCallable, SumaErr
+from suma_lang.runtime.vm.vm import VM, SumaCallable, SumaErr, VMError
 
 
 def _parse(source: str):
@@ -90,6 +89,36 @@ pub main(): Int {
     assert _run_ir(source) == 42
 
 
+def test_let_is_plain_identifier_direct_and_ir():
+    tokens = Tokenizer.tokenize("let", file_name="<test>")
+    assert tokens[0].type is TokenType.ID
+    assert tokens[0].literal == "let"
+
+    source = """
+pub main(): Int {
+    let: Int = 41
+    return let + 1
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_class_is_plain_identifier_direct_and_ir():
+    tokens = Tokenizer.tokenize("class", file_name="<test>")
+    assert tokens[0].type is TokenType.ID
+    assert tokens[0].literal == "class"
+
+    source = """
+pub main(): Int {
+    class: Int = 41
+    return class + 1
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
 def test_legacy_fn_lambda_syntax_is_rejected():
     source = """
 pub main(): Int {
@@ -98,6 +127,7 @@ pub main(): Int {
 }
 """
     with pytest.raises(ParseError):
+        _parse(source)
         _parse(source)
 
 
@@ -120,6 +150,36 @@ World!"""
     assert _run_ir(source) == 42
 
 
+def test_raw_string_disables_interpolation_direct_and_ir():
+    source = r"""
+pub main(): Int {
+    name: Str = "Suma"
+    raw_text: Str = r"hello {name}"
+    return raw_text.size
+}
+"""
+    assert _run(source) == 12
+    assert _run_ir(source) == 12
+
+
+def test_string_interpolation_balances_braces_and_embedded_string_literals_direct_and_ir():
+    source = r"""
+pub main(): Int {
+    value: Str = "x{" + "}"
+    nested: Str = "{if true { \"a{\" + \"}\" } else { \"no\" }}"
+    mixed: Str = "v={value} n={nested}"
+    return mixed.size
+}
+"""
+    assert _run(source) == 11
+    assert _run_ir(source) == 11
+
+
+def test_unterminated_block_comment_reports_syntax_error():
+    with pytest.raises(SyntaxError, match="Unterminated block comment"):
+        Tokenizer.tokenize("pub main(): Int { /* missing end", file_name="<test>")
+
+
 def test_result_propagation_operator_direct_and_ir():
     source = """
 pub parse_digit(text: Str): R {
@@ -134,7 +194,7 @@ pub add(a: Str, b: Str): R {
 
 pub main(): Int {
     result: R = add("40", "2")
-    return result -> { Ok = it; Err = 0 }
+    return match result { Ok => it; Err => 0 }
 }
 """
     for use_ir in (False, True):
@@ -155,7 +215,7 @@ pub add(a: Str, b: Str): R {
 
 pub main(): Int {
     result: R = add("nope", "2")
-    return result -> { Ok = 0; Err = 42 }
+    return match result { Ok => 0; Err => 42 }
 }
 """
     for use_ir in (False, True):
@@ -175,7 +235,7 @@ pub add_one(text: Str): R<Int, Str> {
 
 pub main(): Int {
     result: R<Int, Str> = add_one("41")
-    return result -> { Ok = it; Err = 0 }
+    return match result { Ok => it; Err => 0 }
 }
 """
     assert _run(source) == 42
@@ -207,9 +267,9 @@ def test_result_match_preserves_it_type():
     source = """
 pub main(): Int {
     result: R<Int, Str> = Ok(42)
-    return result -> {
-        Ok = it
-        Err = 0
+    return match result {
+        Ok => it
+        Err => 0
     }
 }
 """
@@ -221,12 +281,12 @@ def test_result_match_it_type_is_checked():
     source = """
 pub main(): Int {
     result: R<Int, Str> = Ok(1)
-    return result -> {
-        Ok = {
+    return match result {
+        Ok => {
             value: Str = it
             0
         }
-        Err = 0
+        Err => 0
     }
 }
 """
@@ -236,19 +296,94 @@ pub main(): Int {
     )
 
 
+def test_match_explicit_bindings_direct_and_ir():
+    source = """
+enum Maybe {
+    Some(Int),
+    None
+}
+
+Box {
+    pub value: Int
+    init(value: Int) { this.value = value }
+}
+
+pub main(): Int {
+    result: R<Int, Str> = Ok(20)
+    maybe: Maybe = Maybe.Some(19)
+    box: Box = Box(1)
+    return match result {
+        Ok(value) => value
+        Err(message) => message.size
+    } + match maybe {
+        Maybe.Some(item) => item
+        Maybe.None => 0
+    } + match box {
+        is Box(found) => found.value
+        _ => 0
+    } + match "go" {
+        "go"(text) => text.size
+        _ => 0
+    }
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_old_result_elvis_question_colon_syntax_is_rejected():
+    source = """
+pub main(): Int {
+    return Ok(1) ?: 0
+}
+"""
+    with pytest.raises(ParseError):
+        _parse(source)
+
+
+def test_legacy_postfix_pattern_match_syntax_is_rejected():
+    source = """
+pub main(): Int {
+    value: R<Int, Str> = Ok(1)
+    return value -> { Ok = it, Err = 0 }
+}
+"""
+    with pytest.raises(ParseError):
+        _parse(source)
+
+
 def test_typed_result_assignment_accepts_matching_ok_and_err():
     source = """
 pub main(): Int {
     ok_value: R<Int, Str> = Ok(1)
     err_value: R<Int, Str> = Err("bad")
-    return ok_value -> {
-        Ok = it + err_value -> { Ok = it; Err = 0 }
-        Err = 0
+    return match ok_value {
+        Ok => it + match err_value { Ok => it; Err => 0 }
+        Err => 0
     }
 }
 """
     assert _run(source) == 1
     assert _run_ir(source) == 1
+
+
+def test_result_alias_direct_and_ir():
+    source = """
+pub value(input: Result<Int, Str>): Int {
+    return match input {
+        Ok => it + 1
+        Err => 0
+    }
+}
+
+pub main(): Int {
+    result: Result<Int, Str> = Ok(41)
+    return value(result)
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
 
 
 def test_typed_result_assignment_rejects_mismatched_payloads():
@@ -330,7 +465,7 @@ pub main(): Int {
     i: Int = 0
     loop {
         if (i > 2) { break }
-        i += 1
+        @i += 1
     }
     return i
 }
@@ -415,6 +550,7 @@ pub main(): Int {
 
 def test_assignment_infers_missing_local_type_direct_and_ir():
     source = """
+
 pub main(): Int {
     x = 40
     return x + 2
@@ -436,7 +572,7 @@ pub main(): Int {
     loop {
         if (i > 3) { break }
         print(to_str(i) + "! = " + to_str(fact(i)))
-        i += 1
+        @i += 1
     }
     return fact(5)
 }
@@ -464,11 +600,11 @@ pub main(): Int {
     missing: R = Err(0)
 
     total: Int = box.get() + values[1]
-    total += (ok_value ?: 0)
-    total += (err_value ?: 1)
-    total += ok_value -> { Ok = it; Err = 0 }
+    total += (ok_value else 0)
+    total += (err_value else 1)
+    total += match ok_value { Ok => it; Err => 0 }
     if (missing?.get() == null) {
-        total += box?.get()
+        @total += box?.get()
     }
     return total
 }
@@ -477,13 +613,29 @@ pub main(): Int {
     assert _run_ir(source) == 83
 
 
-def test_global_assignment_direct_and_ir():
+def test_assignment_can_shadow_global_direct_and_ir():
     source = """
+
 value: Int = 0
 
 pub main(): Int {
     value = 41
     value += 1
+    return value
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_outer_assignment_updates_global_direct_and_ir():
+    source = """
+
+value: Int = 0
+
+pub main(): Int {
+    @value = 41
+    @value += 1
     return value
 }
 """
@@ -505,7 +657,7 @@ def test_ir_elvis_uses_right_only_for_err():
 pub main(): Int {
     ok_value: R<Int, Str> = Ok(42)
     err_value: R = Err(1)
-    return (ok_value ?: 0) + (err_value ?: 40)
+    return (ok_value else 0) + (err_value else 40)
 }
 """
     assert _run(source) == 82
@@ -517,8 +669,8 @@ def test_elvis_unwraps_ok_payload_and_checks_type_direct_and_ir():
 pub main(): Int {
     ok_value: R<Int, Str> = Ok(7)
     err_value: R<Int, Str> = Err("bad")
-    value: Int = ok_value ?: 0
-    return value + (err_value ?: 35)
+    value: Int = ok_value else 0
+    return value + (err_value else 35)
 }
 """
     assert _run(source) == 42
@@ -527,6 +679,7 @@ pub main(): Int {
 
 def test_null_coalescing_short_circuits_direct_and_ir():
     source = """
+
 pub crash(): Int {
     panic("boom")
     return 0
@@ -542,8 +695,27 @@ pub main(): Int {
     assert _run_ir(source) == 42
 
 
+def test_elvis_and_null_coalesce_share_right_associative_precedence():
+    tokens = Tokenizer.tokenize("a else b ?? c", file_name="<test>")
+    expr = Parser(tokens)._parse_expression()
+    assert isinstance(expr, ElvExpr)
+    assert isinstance(expr.right, NullCoalesceExpr)
+    assert isinstance(expr.right.left, Identifier)
+    assert expr.right.left.name == "b"
+    assert isinstance(expr.right.right, Identifier)
+    assert expr.right.right.name == "c"
+
+    tokens = Tokenizer.tokenize("a else b else c", file_name="<test>")
+    parser = Parser(tokens)
+    expr = parser._parse_expression()
+    assert parser._at(TokenType.EOF)
+    assert isinstance(expr, ElvExpr)
+    assert isinstance(expr.right, ElvExpr)
+
+
 def test_safe_member_access_field_direct_and_ir():
     source = """
+
 Person {
     pub name: Str
     pub age: Int
@@ -579,20 +751,303 @@ pub main(): Int {
     ok_box: R<Box, Str> = Ok(Box(39))
     ok_text: R<Str, Str> = Ok("abc")
     err_box: R<Box, Str> = Err("missing")
-    return ok_box?.get() + ok_text?.size + (err_box?.get() ?? 0)
+    return (ok_box?.get() ?? 0) + (ok_text?.size ?? 0) + (err_box?.get() ?? 0)
 }
 """
     assert _run(source) == 42
     assert _run_ir(source) == 42
 
 
+def test_safe_access_result_receiver_returns_nullable_type():
+    errors = _analyze("""
+Box {
+    value: Int
+    init(value: Int) { this.value = value }
+    pub get(): Int { return this.value }
+}
+
+pub main(): Int {
+    maybe_box: R<Box, Str> = Err("missing")
+    value: Int = maybe_box?.get()
+    return value
+}
+""")
+    assert any("Cannot assign Nullable<Int> to 'value'; expected Int" in err for err in errors)
+
+
 def test_destructure_assignment_from_list_direct_and_ir():
     source = """
 pub main(): Int {
+    a = 0;
+    b = 0;
+    c = 0;
     (a, b, c) = List(10, 30, 2)
     return a + b + c
 }
 """
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_list_destructure_runtime_bounds_error_direct_and_ir():
+    source = """
+pub main(): Int {
+    a = 0;
+    b = 0;
+    c = 0;
+    (a, b, c) = List(1, 2)
+    return a + b + c
+}
+"""
+    for use_ir in (False, True):
+        with pytest.raises(VMError, match="List index 2 out of range"):
+            _run(source, use_ir=use_ir)
+
+
+def test_tuple_literal_type_index_and_destructure_decl_direct_and_ir():
+    source = """
+pub pair(): (Int, Str) {
+    return (40, "ok")
+}
+
+pub main(): Int {
+    value: (Int, Str) = pair();
+    (number, text) = value
+    return number + text.size
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_tuple_size_and_iteration_direct_and_ir():
+    source = """
+pub main(): Int {
+    pair = (10, 11, 18)
+    total = pair.size
+    for value in pair {
+        @total += value
+    }
+    return total
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_tuple_destructure_assignment_checks_arity_and_types():
+    errors = _analyze("""
+pub main(): Int {
+    pair = (1, "two")
+    a = 0
+    b = 0
+    c = 0;
+    (a, b, c) = pair
+    return 0
+}
+""")
+    assert any(
+        "Cannot destructure Tuple<Int,Str> into 3 targets; expected 2" in err for err in errors
+    )
+    assert any("Cannot assign destructured Str to Int" in err for err in errors)
+
+
+def test_tuple_assignment_checks_element_types():
+    errors = _analyze("""
+pub main(): Int {
+    pair: (Int, Str) = (1, 2)
+    return 0
+}
+""")
+    assert any(
+        "Cannot assign Tuple<Int,Int> to 'pair'; expected Tuple<Int,Str>" in err for err in errors
+    )
+
+
+def test_destructure_assignment_declares_current_locals_direct_and_ir():
+    source = """
+pub main(): Int {
+    (a, b) = List(1, 2)
+    return a + b + 39
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_enum_variants_construct_match_and_serialize_direct_and_ir():
+    source = """
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    present: Maybe = Maybe.Some(40)
+    missing: Maybe = Maybe.None
+    first: Int = match present {
+        Maybe.Some => it + 1
+        Maybe.None => 0
+    }
+    second: Int = match missing {
+        Maybe.Some => it
+        Maybe.None => 1
+    }
+    return first + second
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+    loaded = deserialize(serialize(_program(source, use_ir=False)))
+    assert loaded.enums == {"Maybe": {"Some": "Int", "None": None}}
+    assert VM(loaded).run() == 42
+
+
+def test_enum_variant_type_checks_and_unknown_variants():
+    errors = _analyze("""
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    wrong_payload: Maybe = Maybe.Some("forty")
+    wrong_arity: Maybe = Maybe.None(1)
+    missing: Maybe = Maybe.Other
+    return 0
+}
+""")
+    assert any("Maybe.Some' payload expects Int, got Str" in err for err in errors)
+    assert any("Maybe.None' expects 0 args, got 1" in err for err in errors)
+    assert any("Enum 'Maybe' has no variant 'Other'" in err for err in errors)
+
+
+def test_empty_enum_variant_match_arm_binds_scrutinee_direct_and_ir():
+    source = """
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    value: Maybe = Maybe.None
+    return match value {
+        Maybe.None => it.value ?? 42
+        Maybe.Some => it
+    }
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_enum_value_from_mixed_payload_enum_is_nullable():
+    errors = _analyze("""
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    value: Maybe = Maybe.None
+    payload: Int = value.value
+    return payload
+}
+""")
+    assert any("Cannot assign Nullable<Int> to 'payload'; expected Int" in err for err in errors)
+
+
+def test_enum_value_from_empty_only_enum_is_rejected():
+    errors = _analyze("""
+enum State {
+    Idle
+}
+
+pub main(): Int {
+    value: State = State.Idle
+    return value.value
+}
+""")
+    assert any("Enum 'State' has no payload values" in err for err in errors)
+
+
+def test_unknown_enum_match_pattern_reports_unknown_enum():
+    errors = _analyze("""
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    value: Maybe = Maybe.Some(1)
+    return match value {
+        Missing.X => 0
+        Maybe.Some => it
+        Maybe.None => 0
+    }
+}
+""")
+    assert any("Unknown enum 'Missing' in match pattern" in err for err in errors)
+
+
+def test_enum_match_requires_all_variants_or_wildcard():
+    missing_errors = _analyze("""
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    value: Maybe = Maybe.Some(1)
+    return match value {
+        Maybe.Some => it
+    }
+}
+""")
+    assert any(
+        "Non-exhaustive match for enum 'Maybe'; missing variants: Maybe.None" in err
+        for err in missing_errors
+    )
+
+    wildcard_source = """
+enum Maybe {
+    Some(Int),
+    None
+}
+
+pub main(): Int {
+    value: Maybe = Maybe.None
+    return match value {
+        Maybe.Some => it
+        _ => 42
+    }
+}
+"""
+    assert _analyze(wildcard_source) == []
+    assert _run(wildcard_source) == 42
+    assert _run_ir(wildcard_source) == 42
+
+
+def test_local_can_shadow_enum_name_direct_and_ir():
+    source = """
+enum Maybe {
+    Some(Int),
+    None
+}
+
+Box {
+    pub Some: Int
+    init(value: Int) { this.Some = value }
+}
+
+pub main(): Int {
+    Maybe = Box(42)
+    return Maybe.Some
+}
+"""
+    assert _analyze(source) == []
     assert _run(source) == 42
     assert _run_ir(source) == 42
 
@@ -638,17 +1093,48 @@ def test_ir_pattern_match_returns_arm_expression():
     source = """
 pub main(): Int {
     value: R = Ok(40)
-    return value -> {
-        Ok = it + 2
-        Err = 0
+    return match value {
+        Ok => it + 2
+        Err => 0
     }
 }
 """
     assert _run_ir(source) == 42
 
 
+def test_match_expression_with_fat_arrow_direct_and_ir():
+    source = """
+Box {
+    pub value: Int
+    init(value: Int) { this.value = value }
+}
+
+pub main(): Int {
+    result: R<Int, Str> = Ok(39)
+    text: Str = "ready"
+    boxed: Box = Box(1)
+    total: Int = match result {
+        Ok => it
+        Err => 0
+    }
+    total += match text {
+        "ready" => 2
+        _ => 0
+    }
+    total += match boxed {
+        is Box => it.value
+        _ => 0
+    }
+    return total
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
 def test_pattern_match_supports_type_and_literal_arms_direct_and_ir():
     source = """
+
 Box {
     pub value: Int
     init(v: Int) { this.value = v }
@@ -659,24 +1145,24 @@ pub main(): Int {
     text: Str = "yes"
     number: Int = 7
 
-    total: Int = box -> {
-        is Box = it.value
-        _ = 0
+    total: Int = match box {
+        is Box => it.value
+        _ => 0
     }
-    total += text -> {
-        "no" = 1
-        "yes" = 2
-        _ = 0
+    total += match text {
+        "no" => 1
+        "yes" => 2
+        _ => 0
     }
-    total += number -> {
-        6 = 10
-        7 = 0
-        _ = 100
+    total += match number {
+        6 => 10
+        7 => 0
+        _ => 100
     }
     flag: Int = 0
-    box -> {
-        is Box = { flag = it.value }
-        _ = { flag = 1 }
+    match box {
+        is Box => { @flag = it.value }
+        _ => { @flag = 1 }
     }
     return total + flag - 40
 }
@@ -711,12 +1197,13 @@ pub main(): Int {
 
 def test_match_expression_supports_literal_result_type_direct_and_ir():
     source = """
+
 pub main(): Int {
     value: Int = 7
-    kind: Str = value -> {
-        6 = "six"
-        7 = "seven"
-        _ = "other"
+    kind: Str = match value {
+        6 => "six"
+        7 => "seven"
+        _ => "other"
     }
     if (kind == "seven") { return 42 }
     return 0
@@ -732,8 +1219,8 @@ pub main(): Int {
     i: Int = 0
     total: Int = 0
     while (i < 7) {
-        total += i
-        i += 1
+        @total += i
+        @i += 1
     }
     return total * 2
 }
@@ -748,13 +1235,13 @@ pub main(): Int {
     values: List = List(10, 11, 12)
     total: Int = 0
     for item in values {
-        total += item
+        @total += item
     }
     for i in 0..3 {
-        total += i
+        @total += i
     }
     for i in 1..=3 {
-        total += i
+        @total += i
     }
     return total
 }
@@ -832,13 +1319,36 @@ def test_nested_pattern_match_restores_outer_it_direct_and_ir():
     source = """
 pub main(): Int {
     value: R = Ok(40)
-    return value -> {
-        Ok = (Ok(1) -> {
-            Ok = it + 1
-            Err = 0
+    return match value {
+        Ok => (match Ok(1) {
+            Ok => it + 1
+            Err => 0
         }) + it
-        Err = 0
+        Err => 0
     }
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_try_catch_skips_catch_without_throw_direct_and_ir():
+    source = """
+pub main(): Int {
+    x: Int = 0
+    try { @x = 42 } catch (e) { @x = 0 }
+    return x
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_throw_jumps_to_catch_direct_and_ir():
+    source = """
+pub main(): Int {
+    try { throw 42 } catch (e) { return e }
+    return 0
 }
 """
     assert _run(source) == 42
@@ -855,7 +1365,7 @@ pub main(): Int {
     } catch (err) {
         throw 2
     } finally {
-        value = 42
+        @value = 42
     }
     return value
 }
@@ -866,6 +1376,68 @@ pub main(): Int {
         assert isinstance(result, SumaErr)
         assert result.value == 2
         assert vm.globals["value"] == 42
+
+
+def test_finally_runs_before_return_from_try_or_catch_direct_and_ir():
+    try_return = """
+value: Int = 0
+
+pub main(): Int {
+    try {
+        return 1
+    } finally {
+        @value = 42
+    }
+}
+"""
+    catch_return = """
+value: Int = 0
+
+pub main(): Int {
+    try {
+        throw 1
+    } catch (err) {
+        return err
+    } finally {
+        @value = 42
+    }
+    return 0
+}
+"""
+    for source, expected in ((try_return, 1), (catch_return, 1)):
+        for use_ir in (False, True):
+            vm = VM(_program(source, use_ir=use_ir))
+            assert vm.run() == expected
+            assert vm.globals["value"] == 42
+
+
+def test_finally_runs_before_break_and_continue_direct_and_ir():
+    source = """
+value: Int = 0
+
+pub main(): Int {
+    i = 0
+    loop {
+        try {
+            break
+        } finally {
+            @value = 20
+        }
+    }
+    while i < 1 {
+        @i += 1
+        try {
+            continue
+        } finally {
+            @value += 21
+        }
+        @value = 0
+    }
+    return value + i
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
 
 
 def test_suma_callable_keeps_fixed_signature_above_three_args():
@@ -907,6 +1479,23 @@ pub main(): Int {
 """
     assert _run(source) == 42
     assert _run_ir(source) == 42
+
+
+def test_index_assignment_rejects_immutable_sequences():
+    errors = _analyze("""
+pub main(): Int {
+    pair: (Int, Int) = (1, 2)
+    pair[0] = 40
+    text = "ab"
+    text[0] = "z"
+    span = 0..2
+    span[0] = 1
+    return 0
+}
+""")
+    assert any("Cannot assign through index on Tuple<Int,Int>" in err for err in errors)
+    assert any("Cannot assign through index on Str" in err for err in errors)
+    assert any("Cannot assign through index on Range" in err for err in errors)
 
 
 def test_ir_getter_and_setter_are_lowered():
@@ -997,13 +1586,13 @@ pub main(): Int {
     values[0] = 42
     return values[0]
 }
-"""
+    """
     loaded = deserialize(serialize(_program(source, use_ir=False)))
-    assert VERSION == 8
+    assert VERSION == 11
     assert VM(loaded).run() == 42
 
 
-def test_serializer_accepts_previous_v6_bytecode():
+def test_deserializer_rejects_stale_bytecode_version():
     program = _program(
         """
 pub main(): Int {
@@ -1012,40 +1601,11 @@ pub main(): Int {
 """,
         use_ir=False,
     )
+    payload = bytearray(serialize(program))
+    payload[4:8] = struct.pack("<I", 6)
 
-    parts = [MAGIC, struct.pack("<I", 6), struct.pack("<I", program.entry)]
-    for payload in (
-        _encode_constants(program.constants),
-        json.dumps(program.classes).encode("utf-8"),
-        json.dumps(program.py_imports).encode("utf-8"),
-        json.dumps(program.decorators).encode("utf-8"),
-    ):
-        parts.append(struct.pack("<I", len(payload)))
-        parts.append(payload)
-
-    parts.append(struct.pack("<I", len(program.functions)))
-    for function in program.functions:
-        name_bytes = function.name.encode("utf-8")
-        class_name_bytes = (function.class_name or "").encode("utf-8")
-        code_data = struct.pack(f"<{len(function.code)}i", *function.code)
-        function_parts = [
-            struct.pack("<I", len(name_bytes)),
-            name_bytes,
-            struct.pack("<I", function.arity),
-            struct.pack("<I", function.locals_count),
-            struct.pack("<B", 1 if function.is_method else 0),
-            struct.pack("<I", len(class_name_bytes)),
-            class_name_bytes,
-            struct.pack("<I", len(function.code)),
-            code_data,
-            _encode_constants(function.constants),
-        ]
-        function_payload = b"".join(function_parts)
-        parts.append(struct.pack("<I", len(function_payload)))
-        parts.append(function_payload)
-
-    loaded = deserialize(b"".join(parts))
-    assert VM(loaded).run() == 42
+    with pytest.raises(ValueError, match="Unsupported .sumac version: 6; expected 11"):
+        deserialize(bytes(payload))
 
 
 def test_deserializer_rejects_truncated_bytecode():
@@ -1118,9 +1678,9 @@ pub main(): Int {
     assert _run_ir(source) == 42
 
 
-def test_analyzer_rejects_optional_parameter_without_default():
+def test_nullable_parameter_without_default_is_required():
     errors = _analyze("""
-pub value(x: Int?): Int {
+pub value(x: Int?): Int? {
     return x
 }
 
@@ -1128,10 +1688,174 @@ pub main(): Int {
     return value()
 }
 """)
-    assert any("Optional parameter 'x' must provide a default value" in err for err in errors)
+    assert any("Function 'value' expects 1-1 args, got 0" in err for err in errors)
 
 
-def test_analyzer_rejects_required_parameter_after_optional():
+def test_nullable_parameter_with_default_direct_and_ir():
+    source = """
+pub value(x: Int? = null): Int {
+    return x ?? 42
+}
+
+pub main(): Int {
+    return value()
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_nullable_type_inside_generic_type_arguments_direct_and_ir():
+    source = """
+pub main(): Int {
+    func: Function<Int?> = (): Int? -> {
+        return null
+    }
+    result: R<Int?, Str> = Ok(func())
+    return match result {
+        Ok => it ?? 42
+        Err => 0
+    }
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_if_expression_narrows_nullable_branches_direct_and_ir():
+    source = """
+pub value(x: Int?): Int {
+    return if x != null { x + 1 } else { 41 }
+}
+
+pub main(): Int {
+    return value(41)
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_if_expression_narrows_nullable_elif_branches_direct_and_ir():
+    source = """
+pub value(left: Int?, right: Int?): Int {
+    return if left != null {
+        left
+    } elif right != null {
+        right
+    } else {
+        42
+    }
+}
+
+pub main(): Int {
+    return value(null, 42)
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_nullable_type_and_result_propagation_do_not_conflict_direct_and_ir():
+    source = """
+pub parse(): Result<Int, Str> {
+    return Ok(41)
+}
+
+pub inner(): Result<Int, Str> {
+    maybe: Int? = parse()?
+    return Ok(maybe ?? 0)
+}
+
+pub main(): Int {
+    return match inner() {
+        Ok => it + 1
+        Err => 0
+    }
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_while_body_narrows_nullable_direct_and_ir():
+    source = """
+pub main(): Int {
+    value: Int? = 41
+    while value != null {
+        return value + 1
+    }
+    return 0
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_nullable_narrowing_is_cleared_after_assignment():
+    errors = _analyze("""
+pub main(): Int {
+    value: Int? = 41
+    if value != null {
+        @value = null
+        return value + 1
+    }
+    return 0
+}
+""")
+    assert any("left operand must be numeric, got Nullable<Int>" in err for err in errors)
+
+
+def test_nullable_narrowing_uses_symbol_identity_for_shadowing():
+    errors = _analyze("""
+pub main(): Int {
+    value: Int? = 41
+    if value != null {
+        value: Int? = null
+        return value + 1
+    }
+    return 0
+}
+""")
+    assert any("left operand must be numeric, got Nullable<Int>" in err for err in errors)
+
+
+def test_nullable_narrowing_does_not_escape_into_lambda():
+    errors = _analyze("""
+pub main(): Int {
+    value: Int? = 41
+    if value != null {
+        read: Function<Int> = (): Int -> value + 1
+        return read()
+    }
+    return 0
+}
+""")
+    assert any("left operand must be numeric, got Nullable<Int>" in err for err in errors)
+
+
+def test_lambda_captures_nullable_original_type_direct_and_ir():
+    source = """
+pub main(): Int {
+    value: Int? = 41
+    if value != null {
+        read: Function<Int> = (): Int -> value ?? 0
+        return read() + 1
+    }
+    return 0
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_analyzer_rejects_required_parameter_after_default():
     errors = _analyze("""
 pub value(x: Int = 1, y: Int): Int {
     return x + y
@@ -1142,31 +1866,9 @@ pub main(): Int {
 }
 """)
     assert any(
-        "Required parameter 'y' cannot follow an optional parameter" in err for err in errors
+        "Required parameter 'y' cannot follow a parameter with a default value" in err
+        for err in errors
     )
-
-
-def test_try_catch_skips_catch_without_throw_direct_and_ir():
-    source = """
-pub main(): Int {
-    x: Int = 0
-    try { x = 42 } catch (e) { x = 0 }
-    return x
-}
-"""
-    assert _run(source) == 42
-    assert _run_ir(source) == 42
-
-
-def test_throw_jumps_to_catch_direct_and_ir():
-    source = """
-pub main(): Int {
-    try { throw 42 } catch (e) { return e }
-    return 0
-}
-"""
-    assert _run(source) == 42
-    assert _run_ir(source) == 42
 
 
 def test_is_operator_direct_and_ir():
@@ -1192,8 +1894,9 @@ pub main(): Int {
     assert _run_ir(source) == 42
 
 
-def test_assignment_to_unknown_local_infers_type_direct_and_ir():
+def test_assignment_declaration_infers_local_type_direct_and_ir():
     source = """
+
 pub main(): Int {
     v = 1
     return v
@@ -1204,8 +1907,109 @@ pub main(): Int {
     assert _run_ir(source) == 1
 
 
+def test_typed_local_scalar_direct_and_ir():
+    source = """
+pub main(): Int {
+    value: Int = 42
+    return value
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_typed_local_requires_initializer():
+    with pytest.raises(ParseError, match="local declarations must include an initializer"):
+        _parse("""
+pub main(): Int {
+    value: Int
+    return value
+}
+""")
+
+
+def test_assignment_to_unknown_local_declares_current_local():
+    errors = _analyze("""
+pub main(): Int {
+    v = 1
+    return v
+}
+""")
+    assert errors == []
+
+
+def test_nested_assignment_declares_shadow_local_direct_and_ir():
+    source = """
+pub main(): Int {
+    value = 40
+    if true {
+        value = 1
+        value += 1
+    }
+    return value + 2
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_outer_assignment_updates_outer_local_direct_and_ir():
+    source = """
+pub main(): Int {
+    value = 0
+    if true {
+        @value = 40
+    }
+    return value + 2
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_local_can_shadow_global_without_updating_global_direct_and_ir():
+    source = """
+value: Int = 40
+
+pub main(): Int {
+    if true {
+        value = 1
+        value += 1
+    }
+    return value + 2
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_lambda_inside_shadowed_scope_captures_shadow_local_direct_and_ir():
+    source = """
+pub main(): Int {
+    value = 1
+    if true {
+        value = 41
+        add_one: Function<Int> = (): Int -> value + 1
+        return add_one()
+    }
+    return value
+}
+"""
+    assert _analyze(source) == []
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+    loaded = deserialize(serialize(_program(source, use_ir=False)))
+    assert any(fn.capture_slots for fn in loaded.functions)
+    assert VM(loaded).run() == 42
+
+
 def test_inferred_assignment_remains_static():
     errors = _analyze("""
+
 pub main(): Int {
     v = 1
     v = "one"
@@ -1226,14 +2030,14 @@ pub main(): Int {
     assert any("Cannot assign Str to Int" in err for err in errors)
 
 
-def test_any_without_initializer_is_not_dynamic():
-    errors = _analyze("""
+def test_local_without_initializer_is_rejected():
+    with pytest.raises(ParseError, match="local declarations must include an initializer"):
+        _parse("""
 pub main(): Int {
     v: Any
     return v + 1
 }
 """)
-    assert any("left operand must be numeric, got Any" in err for err in errors)
 
 
 def test_any_parameter_is_polymorphic_but_not_dynamic():

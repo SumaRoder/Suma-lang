@@ -1,37 +1,33 @@
 pub factorial_1(n: Int): Int {
-    if (n <= 1) {
+    if n <= 1 {
         return 1
     }
     return n * factorial_1(n - 1)
 }
 
 pub factorial_2(n: Int): Int {
-    result: Int = 1
-    i: Int = 2
-    loop {
-        if (i > n) { break }
-        result *= i
-        i += 1
+    result = 1
+    for i in 2..=n {
+        @result *= i
     }
     return result
 }
 
 pub main(): Int {
-    i: Int = 0
-    loop {
-        if (i > 8) { break }
-        recursive: Int = factorial_1(i)
-        iterative: Int = factorial_2(i)
-        if (recursive != iterative) { return 0 }
-        i += 1
+    for i in 0..=8 {
+        recursive = factorial_1(i)
+        iterative = factorial_2(i)
+        if recursive != iterative {
+            return 0
+        }
     }
 
-    score: Int = 0
-    if (factorial_1(0) == 1) { score += 1 }
-    if (factorial_2(0) == 1) { score += 1 }
-    if (factorial_1(5) == 120) { score += 10 }
-    if (factorial_2(5) == 120) { score += 10 }
-    if (factorial_1(8) == 40320) { score += 10 }
-    if (factorial_2(8) == 40320) { score += 10 }
+    score = 0
+    if factorial_1(0) == 1 { @score += 1 }
+    if factorial_2(0) == 1 { @score += 1 }
+    if factorial_1(5) == 120 { @score += 10 }
+    if factorial_2(5) == 120 { @score += 10 }
+    if factorial_1(8) == 40320 { @score += 10 }
+    if factorial_2(8) == 40320 { @score += 10 }
     return score
 }

@@ -1,11 +1,10 @@
 # Embedding from Python
 
-The `suma_lang` package can be used as a library — compile sources at runtime,
+Use the `suma_lang` package as a library: compile Suma sources at runtime,
 inject host Python values into Suma globals, and read results back. This is the
-canonical entry point for tools that want to host scripted logic without
-spawning a subprocess.
+path tools should take to host scripted logic without spawning a subprocess.
 
-## Installation
+## Install the package
 
 ```bash
 pip install -e .
@@ -40,7 +39,7 @@ seed: Int
 result: Int
 
 pub main(): Int {
-    result = seed + 2
+    @result = seed + 2
     return result
 }
 """
@@ -179,7 +178,7 @@ Subclass of `ValueError`, raised by `deserialize()` when reading a malformed
 
 ### `VMError`
 
-Raised by [`VM.run()`](#vm) for runtime errors that the VM cannot recover from
+Raised by [`VM.run()`](#vm) for runtime errors the VM can't recover from
 (division by zero, unwrap on `Err`, type mismatches the analyzer couldn't catch).
 
 ### `VM`
@@ -229,16 +228,19 @@ os.environ["SUMA_PY_IMPORTS"] = "math,statistics"
 
 ```suma
 import "py:math"
+import "py:json"
 
 pub main(): Int {
+    payload: Str = json.dumps(List(40, 2))
+    print(payload)
     return math.floor(42.7)
 }
 ```
 
-## Error handling pattern
+## Catch compile and runtime errors separately
 
-A robust embedder wraps compilation and execution in dedicated try blocks so
-that IDE / CI integrations can distinguish compile errors from runtime errors:
+Wrap compilation and execution in their own `try` blocks. That way an IDE
+or CI integration can tell a bad source file apart from a runtime crash:
 
 ```python
 try:

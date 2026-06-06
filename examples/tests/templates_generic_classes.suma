@@ -10,11 +10,11 @@ Box<T> {
     }
 }
 
-Pair<A, B> {
+Pair<A> {
     pub left: A
-    pub right: B
+    pub right: Int
 
-    init(left: A, right: B) {
+    init(left: A, right: Int) {
         this.left = left
         this.right = right
     }
@@ -26,6 +26,6 @@ Pair<A, B> {
 
 pub main(): Int {
     box: Box<Int> = Box(40)
-    pair: Pair<Str, Int> = Pair("ok", box.get())
+    pair: Pair<Str> = Pair("ok", box.get())
     return pair.score()
 }

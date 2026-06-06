@@ -12,6 +12,7 @@ from typing import Any
 
 from suma_lang.runtime.vm.values import (
     SumaCallable,
+    SumaEnum,
     SumaErr,
     SumaList,
     SumaObject,
@@ -19,6 +20,7 @@ from suma_lang.runtime.vm.values import (
     SumaOverload,
     SumaPyObject,
     SumaRange,
+    SumaTuple,
     _py_repr,
 )
 
@@ -37,11 +39,15 @@ def _format_value(val: Any) -> str:
         return str(val)
     if _isinstance(val, SumaList):
         return val.__repr__()
+    if _isinstance(val, SumaTuple):
+        return val.__repr__()
     if _isinstance(val, SumaRange):
         return val.__repr__()
     if _isinstance(val, SumaOk):
         return val.__repr__()
     if _isinstance(val, SumaErr):
+        return val.__repr__()
+    if _isinstance(val, SumaEnum):
         return val.__repr__()
     if _isinstance(val, SumaObject):
         return f"{val.class_name} instance"

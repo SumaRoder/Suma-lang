@@ -65,6 +65,7 @@ class Op(IntEnum):
     MAKE_LIST = auto()  # arg: element count
     MAKE_OK = auto()
     MAKE_ERR = auto()
+    MAKE_ENUM = auto()  # args: const index ("Enum.Variant"), payload count
     INDEX = auto()
     SLICE = auto()  # arg: bitmask (1=has_start, 2=has_end)
     MEMBER = auto()  # arg: const index (member name)
@@ -77,6 +78,7 @@ class Op(IntEnum):
     # Pattern matching
     IS_OK = auto()
     IS_ERR = auto()
+    IS_ENUM_VARIANT = auto()  # arg: const index ("Enum.Variant")
     UNWRAP_OK = auto()
 
     # I/O
@@ -97,6 +99,7 @@ class Op(IntEnum):
     SET_INDEX = auto()
     STORE_GLOBAL = auto()  # arg: const index (global name)
     MAKE_RANGE = auto()  # arg: 1 if inclusive, else 0
+    MAKE_TUPLE = auto()  # arg: element count
 
 
 @dataclass
@@ -111,6 +114,7 @@ class Function:
     is_method: bool = False
     class_name: str | None = None
     capture_count: int = 0
+    capture_slots: list[int] = field(default_factory=list)
     param_types: list[str | None] = field(default_factory=list)
     type_params: list[str] = field(default_factory=list)
 
@@ -122,6 +126,7 @@ class ProgramBytecode:
     functions: list[Function] = field(default_factory=list)
     constants: list[Any] = field(default_factory=list)
     classes: dict[str, dict] = field(default_factory=dict)
+    enums: dict[str, dict] = field(default_factory=dict)
     py_imports: dict[str, str] = field(default_factory=dict)  # alias -> Python module
     decorators: dict[str, int] = field(default_factory=dict)  # global name -> init function index
     method_decorators: dict[str, int] = field(default_factory=dict)  # Class.method -> init index
