@@ -125,9 +125,7 @@ def _validate_const_index(index: int, fn: Function, prog: ProgramBytecode, conte
 
 def _validate_program_const_index(index: int, prog: ProgramBytecode, context: str) -> None:
     if index < 0 or index >= len(prog.constants):
-        raise BytecodeFormatError(
-            f"Invalid {context}: program constant index {index} out of range"
-        )
+        raise BytecodeFormatError(f"Invalid {context}: program constant index {index} out of range")
 
 
 def _program_string_constant(index: int, prog: ProgramBytecode, context: str) -> str:
@@ -255,9 +253,13 @@ def _validate_code(fn: Function, prog: ProgramBytecode, context: str) -> None:
             try:
                 binop = Op(args[2])
             except ValueError as exc:
-                raise BytecodeFormatError(f"Invalid {context}: unknown inplace opcode {args[2]}") from exc
+                raise BytecodeFormatError(
+                    f"Invalid {context}: unknown inplace opcode {args[2]}"
+                ) from exc
             if binop not in (Op.ADD, Op.SUB, Op.MUL, Op.DIV, Op.MOD):
-                raise BytecodeFormatError(f"Invalid {context}: unsupported inplace opcode {binop.name}")
+                raise BytecodeFormatError(
+                    f"Invalid {context}: unsupported inplace opcode {binop.name}"
+                )
         elif op == Op.JUMP_IF_VAR_CMP:
             _validate_slot(args[0], fn, context)
             _validate_slot(args[1], fn, context)
@@ -607,7 +609,9 @@ def _decode_function(data: bytes, version: int = VERSION) -> Function:
             item is None or isinstance(item, str) for item in param_types
         ):
             raise BytecodeFormatError("Invalid function signature: param_types must be a list")
-        if not isinstance(type_params, list) or not all(isinstance(item, str) for item in type_params):
+        if not isinstance(type_params, list) or not all(
+            isinstance(item, str) for item in type_params
+        ):
             raise BytecodeFormatError("Invalid function signature: type_params must be a list")
         if not isinstance(capture_slots, list) or not all(
             isinstance(item, int) and item >= 0 for item in capture_slots

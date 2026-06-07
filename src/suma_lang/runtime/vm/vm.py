@@ -1065,9 +1065,7 @@ class VM:
                     op_code = code[ip + 2]
                     ip += 3
                     rhs = fc[const_idx] if const_idx < fc_len else constants[const_idx]
-                    slots[target_slot] = apply_binop_with_operator(
-                        op_code, slots[target_slot], rhs
-                    )
+                    slots[target_slot] = apply_binop_with_operator(op_code, slots[target_slot], rhs)
                 case OC.LOOP_GENERIC:
                     arg_count = code[ip]
                     left_slot = code[ip + 1]

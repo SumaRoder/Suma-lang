@@ -43,7 +43,7 @@ def cmd_compile(
     input_path: str, output_path: str | None = None, options: CompileOptions | None = None
 ) -> None:
     """Compile a .suma file to .sumac bytecode."""
-    with open(input_path) as f:
+    with open(input_path, encoding="utf-8") as f:
         source = f.read()
 
     prog = compile_source(source, input_path, options=options)
@@ -72,7 +72,7 @@ def cmd_run(input_path: str) -> None:
 
 def cmd_build_and_run(input_path: str, options: CompileOptions | None = None) -> None:
     """Compile and run a .suma source file."""
-    with open(input_path) as f:
+    with open(input_path, encoding="utf-8") as f:
         source = f.read()
 
     prog = compile_source(source, input_path, options=options)
