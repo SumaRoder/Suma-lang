@@ -282,6 +282,7 @@ def _constant_fold(instrs: list[Instr], constants: list[object]) -> list[Instr]:
     result: list[Instr] = []
     i = 0
     changed = False
+    jump_targets = _find_jump_targets(instrs)
 
     while i < len(instrs):
         # Unary constant folding
@@ -289,7 +290,7 @@ def _constant_fold(instrs: list[Instr], constants: list[object]) -> list[Instr]:
             i + 1 < len(instrs)
             and instrs[i].op == Op.LOAD_CONST
             and instrs[i + 1].op in (Op.NEG, Op.NOT, Op.BIT_NOT)
-            and not _has_jump_target(instrs, _find_jump_targets(instrs), i + 1, 1)
+            and not _has_jump_target(instrs, jump_targets, i + 1, 1)
         ):
             val = _const_at(constants, instrs[i])
             unop = instrs[i + 1].op
@@ -307,7 +308,7 @@ def _constant_fold(instrs: list[Instr], constants: list[object]) -> list[Instr]:
             and instrs[i].op == Op.LOAD_CONST
             and instrs[i + 1].op == Op.LOAD_CONST
             and instrs[i + 2].op in _BINOP_SET
-            and not _has_jump_target(instrs, _find_jump_targets(instrs), i + 1, 2)
+            and not _has_jump_target(instrs, jump_targets, i + 1, 2)
         ):
             a = _const_at(constants, instrs[i])
             b = _const_at(constants, instrs[i + 1])
@@ -332,7 +333,10 @@ def _is_control_flow_boundary(instr: Instr, jump_targets: set[int]) -> bool:
     )
 
 
-def _elide_single_use_temp_slots(instrs: list[Instr]) -> list[Instr]:
+def _elide_single_use_temp_slots(
+    instrs: list[Instr],
+    protected_slots: set[int] | None = None,
+) -> list[Instr]:
     """Remove STORE_VAR/POP/LOAD_VAR shuttles for one-off temp slots.
 
     IR code generation spills every virtual register into a dedicated local slot.
@@ -342,6 +346,7 @@ def _elide_single_use_temp_slots(instrs: list[Instr]) -> list[Instr]:
     if not instrs:
         return instrs
 
+    protected_slots = protected_slots or set()
     jump_targets = _find_jump_targets(instrs)
     store_positions: dict[int, list[int]] = {}
     load_positions: dict[int, list[int]] = {}
@@ -361,6 +366,8 @@ def _elide_single_use_temp_slots(instrs: list[Instr]) -> list[Instr]:
     changed = False
 
     for slot, stores in store_positions.items():
+        if slot in protected_slots:
+            continue
         loads = load_positions.get(slot, [])
         if len(stores) != 1 or len(loads) != 1:
             continue
@@ -375,6 +382,11 @@ def _elide_single_use_temp_slots(instrs: list[Instr]) -> list[Instr]:
             for index in range(store_index, load_index + 1)
         ):
             continue
+        # Keeping the stored value live on the stack is only trivially safe
+        # when the reload immediately follows STORE/POP. Longer intervals can
+        # cross with other spill intervals and reorder operands.
+        if load_index != store_index + 2:
+            continue
 
         remove_indices.add(store_index)
         remove_indices.add(store_index + 1)
@@ -385,6 +397,20 @@ def _elide_single_use_temp_slots(instrs: list[Instr]) -> list[Instr]:
         return instrs
 
     return [instr for index, instr in enumerate(instrs) if index not in remove_indices]
+
+
+def _capture_slots_referenced_by_lambdas(
+    instrs: list[Instr],
+    functions: list[Function],
+) -> set[int]:
+    slots: set[int] = set()
+    for instr in instrs:
+        if instr.op != Op.MAKE_LAMBDA or instr.arg is None:
+            continue
+        if instr.arg < 0 or instr.arg >= len(functions):
+            continue
+        slots.update(functions[instr.arg].capture_slots)
+    return slots
 
 
 _SENTINEL = object()  # signals "could not fold"
@@ -1104,19 +1130,20 @@ class Optimizer:
     def optimize(self, program: ProgramBytecode) -> ProgramBytecode:
         """Optimize all functions in the program."""
         for func_idx, fn in enumerate(program.functions):
-            self._optimize_function(fn, program.constants, func_idx)
+            self._optimize_function(fn, program.constants, func_idx, program.functions)
         return program
 
     def _optimize_function(
-        self, fn: Function, global_constants: list[object], func_idx: int = -1
+        self,
+        fn: Function,
+        global_constants: list[object],
+        func_idx: int = -1,
+        functions: list[Function] | None = None,
     ) -> None:
         """Run optimization passes on a single function until fixpoint."""
-        # Merge global + local constants for folding reference
-        # Local constants are stored in fn.constants; global in program.constants
-        # The compiler emits LOAD_CONST with indices into fn.constants first,
-        # then global constants. We need to handle both.
-        all_constants = fn.constants + global_constants
         local_count = len(fn.constants)
+        has_mixed_constants = local_count > 0 and bool(global_constants)
+        constants_for_passes = fn.constants if local_count else global_constants
 
         for _pass in range(self.max_passes):
             instrs = decode(fn.code)
@@ -1125,17 +1152,27 @@ class Optimizer:
 
             old_code = list(fn.code)
 
-            # Constant folding
-            instrs = _constant_fold(instrs, all_constants)
-
-            # Peephole optimizations
-            instrs = _peephole(instrs, all_constants)
+            if not has_mixed_constants:
+                # Constant-table indexes are local-first, then program-wide at
+                # the same numeric index. A merged list would change meanings
+                # for functions that use both tables, so skip table-reading
+                # rewrites for that legacy mixed representation.
+                instrs = _constant_fold(instrs, constants_for_passes)
+                instrs = _peephole(instrs, constants_for_passes)
 
             # Dead code elimination
             instrs = _eliminate_dead_code(instrs)
 
             # Constant propagation
-            instrs = _constant_propagation(instrs, all_constants)
+            instrs = _constant_propagation(instrs, constants_for_passes)
+
+            # Remove IR spill/load shuttles before fusing hot-path stack sequences
+            protected_slots = (
+                _capture_slots_referenced_by_lambdas(instrs, functions)
+                if functions is not None
+                else set()
+            )
+            instrs = _elide_single_use_temp_slots(instrs, protected_slots)
 
             # Hot-path stack sequence fusion
             instrs = _superinstructions(instrs)
@@ -1153,13 +1190,11 @@ class Optimizer:
             if fn.code == old_code:
                 break
 
-        # Sync local constants back (new constants may have been added by folding)
-        fn.constants = all_constants[:local_count]
-        # Any new constants beyond local_count go to global pool
-        # Actually, for simplicity, keep all new constants local to the function
-        # The VM checks fn.constants first, then program.constants
-        if len(all_constants) > local_count:
-            fn.constants = all_constants
+        if not local_count:
+            # Compiler/codegen output normally uses only the program constant
+            # table. Mutating `global_constants` avoids copying that table into
+            # every function during optimization.
+            fn.constants = []
 
 
 def optimize(program: ProgramBytecode) -> ProgramBytecode:

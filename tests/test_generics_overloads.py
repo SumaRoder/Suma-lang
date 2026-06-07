@@ -1,5 +1,6 @@
 import pytest
 
+from suma_lang.api import CompileOptions, compile_source
 from suma_lang.backend.codegen.compiler import Compiler
 from suma_lang.backend.codegen.serializer import deserialize, serialize
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
@@ -29,6 +30,15 @@ def _program(source: str, use_ir: bool):
 
 def _run(source: str, use_ir: bool = False):
     return VM(_program(source, use_ir=use_ir)).run()
+
+
+def _run_pipeline(source: str, *, use_ir: bool, optimize: bool):
+    program = compile_source(
+        source,
+        "<pipeline-test>",
+        options=CompileOptions(use_ir=use_ir, optimize=optimize),
+    )
+    return VM(program).run()
 
 
 @pytest.mark.parametrize("use_ir", [False, True])
@@ -149,6 +159,91 @@ pub main(): Int {
 }
 """
     assert _run(source, use_ir=use_ir) == 42
+
+
+@pytest.mark.parametrize(
+    ("use_ir", "optimize"),
+    [(False, True), (False, False), (True, True), (True, False)],
+)
+def test_operator_overload_comparison_branch_is_pipeline_consistent(use_ir: bool, optimize: bool):
+    source = """
+Box {
+    pub x: Int
+
+    init(x: Int) {
+        this.x = x
+    }
+
+    pub op_gt(other: Box): Bool {
+        return this.x < other.x
+    }
+}
+
+pub main(): Int {
+    a: Box = Box(1)
+    b: Box = Box(2)
+    if (a > b) {
+        return 42
+    }
+    return 0
+}
+"""
+    assert _run_pipeline(source, use_ir=use_ir, optimize=optimize) == 42
+
+
+@pytest.mark.parametrize(
+    ("use_ir", "optimize"),
+    [(False, True), (False, False), (True, True), (True, False)],
+)
+def test_operator_overload_inplace_superinstruction_is_pipeline_consistent(
+    use_ir: bool, optimize: bool
+):
+    source = """
+Flag {
+    pub value: Int
+
+    init(value: Int) {
+        this.value = value
+    }
+
+    pub op_add(delta: Int): Flag {
+        return Flag(this.value + delta + 1)
+    }
+}
+
+pub main(): Int {
+    flag: Flag = Flag(39)
+    flag = flag + 2
+    return flag.value
+}
+"""
+    assert _run_pipeline(source, use_ir=use_ir, optimize=optimize) == 42
+
+
+@pytest.mark.parametrize(
+    ("use_ir", "optimize"),
+    [(False, True), (False, False), (True, True), (True, False)],
+)
+def test_operator_overload_add_runs_before_string_fallback(use_ir: bool, optimize: bool):
+    source = """
+Box {
+    pub x: Int
+
+    init(x: Int) {
+        this.x = x
+    }
+
+    pub op_add(label: Str): Int {
+        return this.x + label.size
+    }
+}
+
+pub main(): Int {
+    box: Box = Box(40)
+    return box + "hi"
+}
+"""
+    assert _run_pipeline(source, use_ir=use_ir, optimize=optimize) == 42
 
 
 def test_hex_literals_still_work_and_digit_leading_identifiers_are_rejected():

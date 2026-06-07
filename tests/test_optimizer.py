@@ -373,6 +373,25 @@ def test_optimizer_preserves_semantics():
     assert result_unopt == result_opt == 6
 
 
+def test_optimizer_preserves_mixed_local_and_program_constant_namespace():
+    from suma_lang.runtime.vm.vm import VM
+
+    fn = Function(
+        name="main",
+        arity=0,
+        code=[int(Op.LOAD_CONST), 1, int(Op.RETURN)],
+        constants=[5],
+        locals_count=1,
+    )
+    prog = ProgramBytecode(functions=[fn], constants=[10, 20], entry=0)
+
+    assert VM(copy.deepcopy(prog)).run() == 20
+    optimize(prog)
+
+    assert prog.functions[0].constants == [5]
+    assert VM(prog).run() == 20
+
+
 def test_optimizer_preserves_semantics_when_jump_targets_conditional_window():
     """A jump into LOAD_CONST; JUMP_IF_FALSE must keep its original control flow."""
     from suma_lang.runtime.vm.vm import VM

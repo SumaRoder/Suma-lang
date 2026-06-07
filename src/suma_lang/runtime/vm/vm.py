@@ -54,13 +54,27 @@ __all__ = [
 _MISSING = object()
 
 
+def _slot_count(func: Function) -> int:
+    return max(func.locals_count, 1)
+
+
+def _reset_slots(slots: list[Any], count: int) -> list[Any]:
+    if len(slots) < count:
+        slots.extend([None] * (count - len(slots)))
+    elif len(slots) > count:
+        del slots[count:]
+    for index in range(count):
+        slots[index] = None
+    return slots
+
+
 class Frame:
     __slots__ = ("func", "ip", "slots", "stack_base", "this", "it", "pending_push")
 
     def __init__(self, func: Function, stack_base: int, this: Any = None) -> None:
         self.func = func
         self.ip = 0
-        self.slots: list[Any] = [None] * max(func.locals_count, 1)
+        self.slots: list[Any] = [None] * _slot_count(func)
         self.stack_base = stack_base
         self.this = this
         self.it = None
@@ -176,6 +190,16 @@ def _compare_values(left: Any, right: Any, cmp_code: int) -> bool:
     return left <= right
 
 
+_CMP_METHODS = ("op_eq", "op_ne", "op_gt", "op_lt", "op_ge", "op_le")
+_BINOP_METHODS = {
+    OC.ADD: "op_add",
+    OC.SUB: "op_sub",
+    OC.MUL: "op_mul",
+    OC.DIV: "op_div",
+    OC.MOD: "op_mod",
+}
+
+
 class VM:
     _INITIAL_STACK_SIZE = 1024
     _STACK_HEADROOM = 64
@@ -277,6 +301,7 @@ class VM:
             self._sp = 0
 
     def _call_function_index(self, func_idx: int, args: list[Any]) -> Any:
+        old_frame_pool_idx = self._frame_pool_idx
         fn = self.program.functions[func_idx]
         frame = self._alloc_frame(fn, 0)
         for i, arg in enumerate(args):
@@ -285,7 +310,6 @@ class VM:
         old_frames = self.frames
         old_stack = self.stack
         old_sp = getattr(self, "_sp", 0)
-        old_frame_pool_idx = self._frame_pool_idx
         self.frames = [frame]
         self.stack = self._new_stack()
         self._sp = 0
@@ -298,6 +322,7 @@ class VM:
             self._frame_pool_idx = old_frame_pool_idx
 
     def _call_lambda(self, callee: SumaLambda, args: list[Any]) -> Any:
+        old_frame_pool_idx = self._frame_pool_idx
         fn = self.program.functions[callee.func_idx]
         frame = self._alloc_frame(fn, 0)
         for i, value in enumerate(callee.closure):
@@ -313,7 +338,6 @@ class VM:
         old_frames = self.frames
         old_stack = self.stack
         old_sp = getattr(self, "_sp", 0)
-        old_frame_pool_idx = self._frame_pool_idx
         self.frames = [frame]
         self.stack = self._new_stack()
         self._sp = 0
@@ -389,7 +413,7 @@ class VM:
             f = pool[idx]
             f.func = func
             f.ip = 0
-            f.slots = [None] * max(func.locals_count, 1)
+            f.slots = _reset_slots(f.slots, _slot_count(func))
             f.stack_base = stack_base
             f.this = None
             f.it = None
@@ -468,6 +492,28 @@ class VM:
             fpi = self._frame_pool_idx
             return result
 
+        def compare_with_operator(left: Any, right: Any, cmp_code: int) -> bool:
+            if _isinstance(left, _SumaObject):
+                result = call_operator(left, _CMP_METHODS[cmp_code], [right])
+                if result is not _MISSING:
+                    return bool(result)
+            return _compare_values(left, right, cmp_code)
+
+        def apply_binop_with_operator(op_code: int, left: Any, right: Any) -> Any:
+            if _isinstance(left, _SumaObject):
+                method_name = _BINOP_METHODS.get(op_code)
+                if method_name is not None:
+                    result = call_operator(left, method_name, [right])
+                    if result is not _MISSING:
+                        return result
+            return _apply_binop_fast(op_code, left, right)
+
+        def frame_slots_for(func: Function, existing: list[Any] | None = None) -> list[Any]:
+            count = _slot_count(func)
+            if existing is None:
+                return [None] * count
+            return _reset_slots(existing, count)
+
         while ip < code_len:
             if sp + self._STACK_HEADROOM >= len(stack):
                 stack.extend([None] * len(stack))
@@ -518,11 +564,11 @@ class VM:
                 case OC.ADD:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_add", [b])
-                    if result is not _MISSING:  # noqa: SIM108
-                        stack[sp - 2] = result
-                    elif _isinstance(a, int) and _isinstance(b, int):
+                    if _isinstance(a, int) and _isinstance(b, int):
                         stack[sp - 2] = a + b
+                    elif _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_add", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a + b
                     elif _isinstance(a, str) or _isinstance(b, str):
                         stack[sp - 2] = _to_str_fast(a) + _to_str_fast(b)
                     elif _isinstance(a, _SumaList) and _isinstance(b, _SumaList):
@@ -533,21 +579,34 @@ class VM:
                 case OC.SUB:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_sub", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a - b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_sub", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a - b
+                    else:
+                        stack[sp - 2] = a - b
                     sp -= 1
                 case OC.MUL:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_mul", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a * b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_mul", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a * b
+                    else:
+                        stack[sp - 2] = a * b
                     sp -= 1
                 case OC.DIV:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_div", [b])
-                    if result is not _MISSING:
-                        stack[sp - 2] = result
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_div", [b])
+                        if result is not _MISSING:
+                            stack[sp - 2] = result
+                        else:
+                            if b == 0:
+                                raise _VMError("Division by zero")
+                            stack[sp - 2] = (
+                                a // b if _isinstance(a, int) and _isinstance(b, int) else a / b
+                            )
                     else:
                         if b == 0:
                             raise _VMError("Division by zero")
@@ -558,49 +617,75 @@ class VM:
                 case OC.MOD:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_mod", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a % b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_mod", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a % b
+                    else:
+                        stack[sp - 2] = a % b
                     sp -= 1
                 case OC.NEG:
-                    result = call_operator(stack[sp - 1], "op_neg", [])
-                    stack[sp - 1] = result if result is not _MISSING else -stack[sp - 1]
+                    value = stack[sp - 1]
+                    if _isinstance(value, _SumaObject):
+                        result = call_operator(value, "op_neg", [])
+                        fallback: Any = value
+                        stack[sp - 1] = result if result is not _MISSING else -fallback
+                    else:
+                        stack[sp - 1] = -value
 
                 # Hot path: comparison
                 case OC.EQ:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_eq", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a == b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_eq", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a == b
+                    else:
+                        stack[sp - 2] = a == b
                     sp -= 1
                 case OC.NE:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_ne", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a != b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_ne", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a != b
+                    else:
+                        stack[sp - 2] = a != b
                     sp -= 1
                 case OC.GT:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_gt", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a > b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_gt", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a > b
+                    else:
+                        stack[sp - 2] = a > b
                     sp -= 1
                 case OC.LT:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_lt", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a < b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_lt", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a < b
+                    else:
+                        stack[sp - 2] = a < b
                     sp -= 1
                 case OC.GE:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_ge", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a >= b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_ge", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a >= b
+                    else:
+                        stack[sp - 2] = a >= b
                     sp -= 1
                 case OC.LE:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_le", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a <= b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_le", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a <= b
+                    else:
+                        stack[sp - 2] = a <= b
                     sp -= 1
 
                 # Hot path: control flow
@@ -624,7 +709,7 @@ class VM:
                     cmp_code = code[ip + 2]
                     target = code[ip + 3]
                     ip += 4
-                    test = _compare_values(left, right, cmp_code)
+                    test = compare_with_operator(left, right, cmp_code)
                     if not test:
                         ip = target
                 case OC.JUMP_IF_VAR_CONST_CMP:
@@ -634,7 +719,7 @@ class VM:
                     cmp_code = code[ip + 2]
                     target = code[ip + 3]
                     ip += 4
-                    test = _compare_values(left, right, cmp_code)
+                    test = compare_with_operator(left, right, cmp_code)
                     if not test:
                         ip = target
 
@@ -646,10 +731,11 @@ class VM:
                     nargs = arg >> 16
                     fn2 = functions[func_idx]
                     base = sp - nargs
-                    n = fn2.locals_count
-                    if n < 1:
-                        n = 1
-                    new_slots = [None] * n
+                    new_slots = (
+                        frame_slots_for(fn2, frame_pool[fpi].slots)
+                        if fpi < len(frame_pool)
+                        else frame_slots_for(fn2)
+                    )
                     # Direct copy from stack to slots
                     j = base
                     for i in range(nargs):
@@ -689,10 +775,7 @@ class VM:
                     nargs = arg >> 16
                     fn2 = functions[func_idx]
                     base = sp - nargs
-                    n = fn2.locals_count
-                    if n < 1:
-                        n = 1
-                    new_slots = [None] * n
+                    new_slots = frame_slots_for(fn2, frame.slots)
                     j = base
                     for i in range(nargs):
                         new_slots[i] = stack[j]
@@ -732,10 +815,11 @@ class VM:
                             continue
                         if callee in func_map:
                             fn2 = functions[func_map[callee]]
-                            n = fn2.locals_count
-                            if n < 1:
-                                n = 1
-                            new_slots = [None] * n
+                            new_slots = (
+                                frame_slots_for(fn2, frame_pool[fpi].slots)
+                                if fpi < len(frame_pool)
+                                else frame_slots_for(fn2)
+                            )
                             j = base
                             for i in range(nargs):
                                 new_slots[i] = stack[j]
@@ -788,10 +872,12 @@ class VM:
                             sp = self._sp
                             continue
                         fn2 = functions[callee.func_idx]
-                        n = fn2.locals_count
-                        if n < 1:
-                            n = 1
-                        new_slots = [None] * n
+                        new_slots = (
+                            frame_slots_for(fn2, frame_pool[fpi].slots)
+                            if fpi < len(frame_pool)
+                            else frame_slots_for(fn2)
+                        )
+                        n = len(new_slots)
                         for ci, cv in enumerate(callee.closure):
                             if ci < n:
                                 new_slots[ci] = cv
@@ -900,41 +986,65 @@ class VM:
                 case OC.BIT_AND:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_bit_and", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a & b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_bit_and", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a & b
+                    else:
+                        stack[sp - 2] = a & b
                     sp -= 1
                 case OC.BIT_OR:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_bit_or", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a | b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_bit_or", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a | b
+                    else:
+                        stack[sp - 2] = a | b
                     sp -= 1
                 case OC.BIT_XOR:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_bit_xor", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a ^ b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_bit_xor", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a ^ b
+                    else:
+                        stack[sp - 2] = a ^ b
                     sp -= 1
                 case OC.BIT_NOT:
-                    result = call_operator(stack[sp - 1], "op_bit_not", [])
-                    stack[sp - 1] = result if result is not _MISSING else ~stack[sp - 1]
+                    value = stack[sp - 1]
+                    if _isinstance(value, _SumaObject):
+                        result = call_operator(value, "op_bit_not", [])
+                        fallback: Any = value
+                        stack[sp - 1] = result if result is not _MISSING else ~fallback
+                    else:
+                        stack[sp - 1] = ~value
                 case OC.SHL:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_shl", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a << b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_shl", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a << b
+                    else:
+                        stack[sp - 2] = a << b
                     sp -= 1
                 case OC.SHR:
                     b = stack[sp - 1]
                     a = stack[sp - 2]
-                    result = call_operator(a, "op_shr", [b])
-                    stack[sp - 2] = result if result is not _MISSING else a >> b
+                    if _isinstance(a, _SumaObject):
+                        result = call_operator(a, "op_shr", [b])
+                        stack[sp - 2] = result if result is not _MISSING else a >> b
+                    else:
+                        stack[sp - 2] = a >> b
                     sp -= 1
 
                 # Logic
                 case OC.NOT:
-                    result = call_operator(stack[sp - 1], "op_not", [])
-                    stack[sp - 1] = result if result is not _MISSING else not stack[sp - 1]
+                    value = stack[sp - 1]
+                    if _isinstance(value, _SumaObject):
+                        result = call_operator(value, "op_not", [])
+                        stack[sp - 1] = result if result is not _MISSING else not value
+                    else:
+                        stack[sp - 1] = not value
                 case OC.AND:
                     stack[sp - 2] = stack[sp - 2] and stack[sp - 1]
                     sp -= 1
@@ -946,7 +1056,7 @@ class VM:
                     rhs_slot = code[ip + 1]
                     op_code = code[ip + 2]
                     ip += 3
-                    slots[target_slot] = _apply_binop_fast(
+                    slots[target_slot] = apply_binop_with_operator(
                         op_code, slots[target_slot], slots[rhs_slot]
                     )
                 case OC.INPLACE_VAR_CONST:
@@ -955,7 +1065,9 @@ class VM:
                     op_code = code[ip + 2]
                     ip += 3
                     rhs = fc[const_idx] if const_idx < fc_len else constants[const_idx]
-                    slots[target_slot] = _apply_binop_fast(op_code, slots[target_slot], rhs)
+                    slots[target_slot] = apply_binop_with_operator(
+                        op_code, slots[target_slot], rhs
+                    )
                 case OC.LOOP_GENERIC:
                     arg_count = code[ip]
                     left_slot = code[ip + 1]
@@ -967,7 +1079,7 @@ class VM:
                     while True:
                         left = slots[left_slot]
                         right = slots[right_slot]
-                        test = _compare_values(left, right, cmp_code)
+                        test = compare_with_operator(left, right, cmp_code)
                         if test:
                             break
                         j = ops_base
@@ -981,7 +1093,9 @@ class VM:
                                 rhs = fc[const_idx] if const_idx < fc_len else constants[const_idx]
                             else:
                                 rhs = slots[rhs_ref]
-                            slots[target_slot] = _apply_binop_fast(op_code, slots[target_slot], rhs)
+                            slots[target_slot] = apply_binop_with_operator(
+                                op_code, slots[target_slot], rhs
+                            )
 
                 # Data structures
                 case OC.MAKE_LIST:
@@ -1094,10 +1208,11 @@ class VM:
                         getter_idx = getters.get(name)
                         if getter_idx is not None:
                             getter_fn = functions[getter_idx]
-                            n = getter_fn.locals_count
-                            if n < 1:
-                                n = 1
-                            new_slots: list[Any] = [None] * n
+                            new_slots = (
+                                frame_slots_for(getter_fn, frame_pool[fpi].slots)
+                                if fpi < len(frame_pool)
+                                else frame_slots_for(getter_fn)
+                            )
                             new_slots[0] = obj
                             sp -= 1
                             if fpi < len(frame_pool):
@@ -1256,10 +1371,11 @@ class VM:
                     if init_idx is not None:
                         init_fn = functions[init_idx]
                         base = sp - nargs
-                        n = init_fn.locals_count
-                        if n < 1:
-                            n = 1
-                        new_slots: list[Any] = [None] * n
+                        new_slots = (
+                            frame_slots_for(init_fn, frame_pool[fpi].slots)
+                            if fpi < len(frame_pool)
+                            else frame_slots_for(init_fn)
+                        )
                         new_slots[0] = obj
                         j = base
                         for i in range(nargs):

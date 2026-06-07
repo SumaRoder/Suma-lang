@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import contextlib
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from suma_lang.api import CompileOptions, CompileSourceError, compile_source
-from suma_lang.backend.codegen.opcodes import Function, ProgramBytecode
+from suma_lang.backend.codegen.opcodes import Function, Op, ProgramBytecode
 from suma_lang.backend.codegen.serializer import (
     BytecodeFormatError,
     deserialize,
@@ -73,11 +74,11 @@ _CONSTANT = st.one_of(
 )
 
 
-def _serializer_program(consts: list, fn_consts: list, code: list) -> ProgramBytecode:
+def _serializer_program(consts: list, fn_consts: list) -> ProgramBytecode:
     fn = Function(
         name="main",
         arity=0,
-        code=code,
+        code=[int(Op.LOAD_NULL), int(Op.RETURN)],
         constants=fn_consts,
         locals_count=0,
     )
@@ -88,10 +89,9 @@ def _serializer_program(consts: list, fn_consts: list, code: list) -> ProgramByt
 @given(
     st.lists(_CONSTANT, max_size=10),
     st.lists(_CONSTANT, max_size=10),
-    st.lists(st.integers(min_value=0, max_value=255), max_size=20),
 )
-def test_serializer_round_trip(consts: list, fn_consts: list, code: list) -> None:
-    program = _serializer_program(consts, fn_consts, code)
+def test_serializer_round_trip(consts: list, fn_consts: list) -> None:
+    program = _serializer_program(consts, fn_consts)
     blob = serialize(program)
     restored = deserialize(blob)
     assert restored.entry == program.entry
@@ -106,12 +106,50 @@ def test_serializer_round_trip(consts: list, fn_consts: list, code: list) -> Non
 @FUZZ
 @given(st.binary(max_size=64))
 def test_deserialize_rejects_random_bytes(blob: bytes) -> None:
-    try:
+    with contextlib.suppress(BytecodeFormatError):
         deserialize(blob)
-    except BytecodeFormatError:
-        pass
-    except (UnicodeDecodeError, ValueError):
-        # JSON sections can fail with UnicodeDecodeError / json.JSONDecodeError
-        # (a ValueError subclass) when length-prefixed bytes happen to look
-        # valid enough to read but contain invalid payloads. Accept these.
-        pass
+
+
+def test_deserialize_rejects_empty_function_table() -> None:
+    blob = serialize(ProgramBytecode(functions=[], constants=[], entry=0))
+    with pytest.raises(BytecodeFormatError, match="no functions"):
+        deserialize(blob)
+
+
+def test_deserialize_rejects_unknown_opcode() -> None:
+    fn = Function(name="main", arity=0, code=[999], locals_count=0)
+    blob = serialize(ProgramBytecode(functions=[fn], constants=[], entry=0))
+    with pytest.raises(BytecodeFormatError, match="unknown opcode"):
+        deserialize(blob)
+
+
+def test_deserialize_rejects_truncated_opcode_operand() -> None:
+    fn = Function(name="main", arity=0, code=[int(Op.LOAD_CONST)], locals_count=0)
+    blob = serialize(ProgramBytecode(functions=[fn], constants=[], entry=0))
+    with pytest.raises(BytecodeFormatError, match="truncated LOAD_CONST"):
+        deserialize(blob)
+
+
+def test_deserialize_rejects_call_global_arity_mismatch() -> None:
+    helper = Function(
+        name="helper",
+        arity=0,
+        code=[int(Op.LOAD_NULL), int(Op.RETURN)],
+        locals_count=0,
+    )
+    main = Function(
+        name="main",
+        arity=0,
+        code=[int(Op.CALL_GLOBAL), (3 << 16) | 0, int(Op.RETURN)],
+        locals_count=0,
+    )
+    blob = serialize(ProgramBytecode(functions=[helper, main], constants=[], entry=1))
+    with pytest.raises(BytecodeFormatError, match="call arity"):
+        deserialize(blob)
+
+
+def test_deserialize_rejects_bad_decorator_function_index() -> None:
+    fn = Function(name="main", arity=0, code=[int(Op.LOAD_NULL), int(Op.RETURN)], locals_count=0)
+    blob = serialize(ProgramBytecode(functions=[fn], constants=[], decorators={"main": 999}))
+    with pytest.raises(BytecodeFormatError, match="decorators"):
+        deserialize(blob)

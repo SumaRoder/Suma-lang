@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import tempfile
+from importlib import resources
 from pathlib import Path
 
-from main import CompileSourceError, compile_source
-from suma_lang.api import CompileOptions
+from suma_lang.api import CompileOptions, CompileSourceError, compile_source
+from suma_lang.frontend.imports import resolver as resolver_mod
 from suma_lang.runtime.vm.vm import VM
 
 
@@ -131,6 +132,27 @@ pub main(): Int {
 }
 """
         assert _run(source, "<stdin>") == 42
+
+
+def test_package_stdlib_resources_are_available():
+    stdlib = resources.files("suma_lang").joinpath("stdlib")
+    assert stdlib.joinpath("core.suma").is_file()
+    assert stdlib.joinpath("math.suma").is_file()
+    assert stdlib.joinpath("list.suma").is_file()
+    assert stdlib.joinpath("json.suma").is_file()
+
+
+def test_package_stdlib_fallback_without_source_tree(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(resolver_mod, "_source_tree_root", lambda: None)
+    source = """
+import "core"
+
+pub main(): Int {
+    return clamp(99, 0, 42)
+}
+"""
+    assert _run(source, "<stdin>") == 42
 
 
 def test_duplicate_import_is_deduped():

@@ -155,6 +155,12 @@ def main(argv: list[str] | None = None) -> None:
     except VMError as err:
         print(f"[Runtime] {err}", file=sys.stderr)
         sys.exit(1)
+    except UnicodeError as err:
+        print(f"[IO] {err}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as err:
+        print(f"[IO] {err}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

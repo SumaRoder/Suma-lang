@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import struct
 import sys
 from pathlib import Path
 
 import pytest
 
 import suma_lang.cli as cli
+from suma_lang.backend.codegen.serializer import MAGIC, VERSION
 
 
 def _run_cli(args: list[str], *, capsys, source_path: Path, expected: str = "55") -> None:
@@ -168,6 +170,56 @@ pub main(): Int {
     assert exc.value.code == 1
     assert captured.out.strip() == ""
     assert "[Runtime] Division by zero" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cli_reports_missing_source_file_without_traceback(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["run", "missing.suma"])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 1
+    assert captured.out.strip() == ""
+    assert "[IO]" in captured.err
+    assert "missing.suma" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cli_reports_invalid_utf8_source_without_traceback(tmp_path, capsys):
+    path = tmp_path / "bad.suma"
+    path.write_bytes(b"\xff")
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["run", str(path)])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 1
+    assert captured.out.strip() == ""
+    assert "[IO]" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cli_reports_malformed_bytecode_without_traceback(tmp_path, capsys):
+    consts = struct.pack("<I", 0)
+    bad = (
+        MAGIC
+        + struct.pack("<I", VERSION)
+        + struct.pack("<I", 0)
+        + struct.pack("<I", len(consts))
+        + consts
+        + struct.pack("<I", 1)
+        + b"{"
+    )
+    path = tmp_path / "bad.sumac"
+    path.write_bytes(bad)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["execute", str(path)])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 1
+    assert captured.out.strip() == ""
+    assert "[Bytecode]" in captured.err
     assert "Traceback" not in captured.err
 
 

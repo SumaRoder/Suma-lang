@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from hashlib import blake2s
+from importlib import resources
 from pathlib import Path
 
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
@@ -17,6 +18,13 @@ from suma_lang.frontend.parser.parser import Parser
 
 class ImportResolveError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class ResolvedImport:
+    key: str
+    display_name: str
+    source: str
 
 
 DEFAULT_PY_IMPORT_ALLOWLIST = frozenset(
@@ -52,21 +60,22 @@ class ImportResolver:
         return Program(declarations=decls, py_imports=py_imports)
 
     def load_file(self, path: str) -> Program:
-        full_path = _real(path)
-        if full_path in self.loaded:
+        return self._load_resolved(_resolved_file(Path(path)))
+
+    def _load_resolved(self, resolved: ResolvedImport) -> Program:
+        if resolved.key in self.loaded:
             return Program(declarations=[])
-        if full_path in self.loading:
-            cycle = " -> ".join([*self.loading, full_path])
+        if resolved.key in self.loading:
+            cycle = " -> ".join([*self.loading, resolved.key])
             raise ImportResolveError(f"Circular import detected: {cycle}")
 
-        self.loading.append(full_path)
+        self.loading.append(resolved.key)
         try:
-            source = Path(full_path).read_text()
-            tokens = Tokenizer.tokenize(source, file_name=full_path)
+            tokens = Tokenizer.tokenize(resolved.source, file_name=resolved.display_name)
             program = Parser.parse(tokens)
-            expanded = self.resolve_program(program, full_path)
-            expanded = _rewrite_imported_program(expanded, full_path)
-            self.loaded.add(full_path)
+            expanded = self.resolve_program(program, resolved.display_name)
+            expanded = _rewrite_imported_program(expanded, resolved.display_name)
+            self.loaded.add(resolved.key)
             return expanded
         finally:
             self.loading.pop()
@@ -91,15 +100,15 @@ class ImportResolver:
                         )
                     py_imports[alias] = module_name
                     continue
-                imported_path = self._resolve_import_path(decl.path, current_file)
-                imported = self.load_file(imported_path)
+                imported_resolved = self._resolve_import_path(decl.path, current_file)
+                imported = self._load_resolved(imported_resolved)
                 py_imports.update(imported.py_imports)
                 expanded.extend(imported.declarations)
             else:
                 expanded.append(decl)
         return expanded
 
-    def _resolve_import_path(self, import_path: str, current_file: str | None) -> str:
+    def _resolve_import_path(self, import_path: str, current_file: str | None) -> ResolvedImport:
         attempted: list[str] = []
         raw = Path(import_path).expanduser()
 
@@ -107,11 +116,15 @@ class ImportResolver:
             for candidate in _candidate_files(raw):
                 attempted.append(str(candidate))
                 if candidate.is_file():
-                    return _real(candidate)
+                    return _resolved_file(candidate)
             raise self._not_found(import_path, attempted)
 
         search_roots: list[Path] = []
-        if current_file and current_file not in ("<stdin>", "<unknown>"):
+        if (
+            current_file
+            and current_file not in ("<stdin>", "<unknown>")
+            and not current_file.startswith("resource:")
+        ):
             search_roots.append(Path(current_file).resolve().parent)
         if not import_path.startswith(("./", "../")):
             search_roots.extend(Path(p).expanduser() for p in self.import_paths)
@@ -120,7 +133,12 @@ class ImportResolver:
             for candidate in _candidate_files(root / raw):
                 attempted.append(str(candidate))
                 if candidate.is_file():
-                    return _real(candidate)
+                    return _resolved_file(candidate)
+
+        if not import_path.startswith(("./", "../")):
+            resource = _resolve_stdlib_resource(import_path, attempted)
+            if resource is not None:
+                return resource
 
         raise self._not_found(import_path, attempted)
 
@@ -143,18 +161,39 @@ def _candidate_files(path: Path) -> list[Path]:
     return [path, path.with_suffix(".suma")]
 
 
+def _candidate_resource_names(import_path: str) -> list[str]:
+    path = Path(import_path)
+    names = [str(path)]
+    if not path.suffix:
+        names.append(str(path.with_suffix(".suma")))
+    return names
+
+
 def _default_import_paths() -> list[str]:
-    project_root = Path(__file__).resolve().parents[4]
-    return [
-        str(Path.cwd()),
-        str(project_root),
-        *_stdlib_import_paths(project_root),
-    ]
+    paths = [str(Path.cwd())]
+    source_root = _source_tree_root()
+    if source_root is not None:
+        paths.append(str(source_root))
+    paths.extend(_stdlib_import_paths(source_root))
+    return paths
 
 
-def _stdlib_import_paths(project_root: Path) -> list[str]:
+def _source_tree_root() -> Path | None:
+    candidate = Path(__file__).resolve().parents[4]
+    if (candidate / "pyproject.toml").is_file() and (candidate / "stdlib").is_dir():
+        return candidate
+    return None
+
+
+def _stdlib_import_paths(project_root: Path | None) -> list[str]:
     configured = _env_path_list("SUMA_STDLIB_PATHS")
-    return [*configured, str(project_root / "stdlib")]
+    paths = [*configured]
+    if project_root is not None:
+        paths.append(str(project_root / "stdlib"))
+    package_stdlib = Path(__file__).resolve().parents[2] / "stdlib"
+    if package_stdlib.is_dir():
+        paths.append(str(package_stdlib))
+    return paths
 
 
 def _env_path_list(name: str) -> list[str]:
@@ -183,6 +222,36 @@ def _normalize_filename(filename: str | None) -> str | None:
 
 def _real(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+def _resolved_file(path: Path) -> ResolvedImport:
+    full_path = _real(path)
+    return ResolvedImport(
+        key=full_path,
+        display_name=full_path,
+        source=Path(full_path).read_text(encoding="utf-8"),
+    )
+
+
+def _resolve_stdlib_resource(import_path: str, attempted: list[str]) -> ResolvedImport | None:
+    try:
+        stdlib_root = resources.files("suma_lang").joinpath("stdlib")
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        return None
+    for name in _candidate_resource_names(import_path):
+        candidate = stdlib_root.joinpath(*Path(name).parts)
+        display_name = f"resource:suma_lang/stdlib/{name}"
+        attempted.append(display_name)
+        try:
+            if candidate.is_file():
+                return ResolvedImport(
+                    key=display_name,
+                    display_name=display_name,
+                    source=candidate.read_text(encoding="utf-8"),
+                )
+        except (FileNotFoundError, UnicodeDecodeError):
+            continue
+    return None
 
 
 def _py_alias(module_name: str) -> str:
