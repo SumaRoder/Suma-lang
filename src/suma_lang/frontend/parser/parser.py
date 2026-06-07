@@ -3,21 +3,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import NoReturn
 
-from suma_lang.frontend.lexer.token_types import Token, TokenType
+from suma_lang.frontend.lexer.token_types import Token, TokenInfo, TokenType
+from suma_lang.frontend.parser._expressions import _ExpressionsMixin
 from suma_lang.frontend.parser.ast_nodes import (
-    AssignExpr,
-    BinaryExpr,
     BlockStmt,
     BoolLiteral,
     BreakStmt,
-    CallExpr,
     ClassDecl,
-    CompoundAssignExpr,
     ContinueStmt,
     Decorator,
     DestructureAssignStmt,
     DestructureDeclStmt,
-    ElvExpr,
     EnumDecl,
     EnumVariantDecl,
     ErrExpr,
@@ -31,8 +27,7 @@ from suma_lang.frontend.parser.ast_nodes import (
     IfExpr,
     IfStmt,
     ImportDecl,
-    IncrementExpr,
-    IndexExpr,
+    InterpolatedStringExpr,
     IntLiteral,
     ItExpr,
     LambdaExpr,
@@ -40,21 +35,14 @@ from suma_lang.frontend.parser.ast_nodes import (
     LoopStmt,
     MatchArm,
     MatchPattern,
-    MemberExpr,
-    NullCoalesceExpr,
     NullLiteral,
     OkExpr,
     OuterIdentifier,
     Param,
     PatternMatchExpr,
     Program,
-    PropagateExpr,
-    RangeExpr,
     ReturnStmt,
-    SafeCallExpr,
-    SafeMemberExpr,
     SetterDecl,
-    SliceExpr,
     Stmt,
     StrLiteral,
     ThisExpr,
@@ -62,7 +50,6 @@ from suma_lang.frontend.parser.ast_nodes import (
     TopLevel,
     TryCatchStmt,
     TupleExpr,
-    UnaryExpr,
     VarDecl,
     WhileStmt,
 )
@@ -72,11 +59,12 @@ class ParseError(SyntaxError):
     pass
 
 
-class Parser:
+class Parser(_ExpressionsMixin):
     def __init__(self, tokens: list[Token]) -> None:
         self._tokens = tokens
         self._pos = 0
         self.errors: list[str] = []
+        self._matching_rpar_cache: dict[int, int | None] = {}
 
     def _cur(self) -> Token:
         return self._tokens[self._pos]
@@ -387,6 +375,9 @@ class Parser:
         return type_name
 
     def _matching_rpar_index(self, start: int) -> int | None:
+        cached = self._matching_rpar_cache.get(start)
+        if cached is not None or start in self._matching_rpar_cache:
+            return cached
         depth = 0
         for i in range(start, len(self._tokens)):
             token_type = self._tokens[i].type
@@ -395,7 +386,9 @@ class Parser:
             elif token_type == TokenType.RPAR:
                 depth -= 1
                 if depth == 0:
+                    self._matching_rpar_cache[start] = i
                     return i
+        self._matching_rpar_cache[start] = None
         return None
 
     def _looks_like_lambda_params(self, start: int, end: int) -> bool:
@@ -424,20 +417,39 @@ class Parser:
 
     def _is_paren_lambda_ahead(self) -> bool:
         """Lookahead for the modern `(params) -> body` lambda syntax."""
+        return self._paren_primary_kind() == "lambda"
+
+    def _has_top_level_comma_before_rpar(self, start: int, rpar: int) -> bool:
+        depth = 0
+        for index in range(start + 1, rpar):
+            token_type = self._tokens[index].type
+            if token_type == TokenType.LPAR:
+                depth += 1
+            elif token_type == TokenType.RPAR:
+                depth -= 1
+            elif token_type == TokenType.COMMA and depth == 0:
+                return True
+        return False
+
+    def _paren_primary_kind(self) -> str:
         if not self._at(TokenType.LPAR):
-            return False
+            return "none"
         rpar = self._matching_rpar_index(self._pos)
-        if rpar is None or rpar + 1 >= len(self._tokens):
-            return False
-        if not self._looks_like_lambda_params(self._pos + 1, rpar):
-            return False
-        next_token = self._tokens[rpar + 1]
-        if next_token.type == TokenType.ARROW:
-            return True
-        if next_token.type != TokenType.COLON:
-            return False
-        after_type = self._next_after_type_name(rpar + 2)
-        return after_type is not None and self._tokens[after_type].type == TokenType.ARROW
+        if rpar is None:
+            return "grouped"
+        if self._looks_like_lambda_params(self._pos + 1, rpar):
+            next_index = rpar + 1
+            if next_index < len(self._tokens):
+                next_token = self._tokens[next_index]
+                if next_token.type == TokenType.ARROW:
+                    return "lambda"
+                if next_token.type == TokenType.COLON:
+                    after_type = self._next_after_type_name(next_index + 1)
+                    if after_type is not None and self._tokens[after_type].type == TokenType.ARROW:
+                        return "lambda"
+        if self._has_top_level_comma_before_rpar(self._pos, rpar):
+            return "tuple"
+        return "grouped"
 
     @staticmethod
     def parse(tokens: list[Token]) -> Program:
@@ -774,7 +786,7 @@ class Parser:
 
         return self._parse_expr_stmt()
 
-    def _parse_destructure_decl(self, info) -> DestructureDeclStmt:
+    def _parse_destructure_decl(self, info: TokenInfo) -> DestructureDeclStmt:
         self._expect(TokenType.LPAR)
         targets = [self._literal(self._expect(TokenType.ID))]
         if not self._match(TokenType.COMMA):
@@ -957,261 +969,6 @@ class Parser:
         self._match(TokenType.SEM)
         return DestructureAssignStmt(targets=tuple(targets), value=value, info=info)
 
-    def _parse_expression(self, *, allow_result_else: bool = True) -> Expr:
-        return self._parse_assignment(allow_result_else=allow_result_else)
-
-    def _parse_assignment(self, *, allow_result_else: bool = True) -> Expr:
-        left = self._parse_range(allow_result_else=allow_result_else)
-        if self._at(TokenType.ASSIGN):
-            info = self._advance().info
-            right = self._parse_assignment(allow_result_else=allow_result_else)
-            return AssignExpr(target=left, value=right, info=info)
-        for op_tt, op_str in [
-            (TokenType.ADD_ASSIGN, "+="),
-            (TokenType.MINUS_ASSIGN, "-="),
-            (TokenType.MULT_ASSIGN, "*="),
-            (TokenType.DIV_ASSIGN, "/="),
-            (TokenType.REM_ASSIGN, "%="),
-        ]:
-            if self._at(op_tt):
-                info = self._advance().info
-                right = self._parse_assignment(allow_result_else=allow_result_else)
-                return CompoundAssignExpr(op=op_str, target=left, value=right, info=info)
-        return left
-
-    def _parse_elvis(self, *, allow_result_else: bool = True) -> Expr:
-        left = self._parse_or()
-        if allow_result_else and self._match(TokenType.ELSE):
-            right = self._parse_elvis(allow_result_else=allow_result_else)
-            return ElvExpr(left=left, right=right, info=left.info)
-        if self._match(TokenType.NULL_COALESCE):
-            right = self._parse_elvis(allow_result_else=allow_result_else)
-            return NullCoalesceExpr(left=left, right=right, info=left.info)
-        return left
-
-    def _parse_range(self, *, allow_result_else: bool = True) -> Expr:
-        left = self._parse_elvis(allow_result_else=allow_result_else)
-        if self._at(TokenType.RANGE, TokenType.RANGE_INCLUSIVE):
-            inclusive = self._cur().type == TokenType.RANGE_INCLUSIVE
-            info = self._advance().info
-            right = self._parse_elvis(allow_result_else=allow_result_else)
-            return RangeExpr(start=left, end=right, inclusive=inclusive, info=info)
-        return left
-
-    def _parse_or(self) -> Expr:
-        left = self._parse_and()
-        while self._match(TokenType.ORL):
-            right = self._parse_and()
-            left = BinaryExpr(op="||", left=left, right=right, info=left.info)
-        return left
-
-    def _parse_and(self) -> Expr:
-        left = self._parse_bit_or()
-        while self._match(TokenType.ANDL):
-            right = self._parse_bit_or()
-            left = BinaryExpr(op="&&", left=left, right=right, info=left.info)
-        return left
-
-    def _parse_bit_or(self) -> Expr:
-        left = self._parse_bit_xor()
-        while self._match(TokenType.ORB):
-            right = self._parse_bit_xor()
-            left = BinaryExpr(op="|", left=left, right=right, info=left.info)
-        return left
-
-    def _parse_bit_xor(self) -> Expr:
-        left = self._parse_bit_and()
-        while self._match(TokenType.XOR):
-            right = self._parse_bit_and()
-            left = BinaryExpr(op="^", left=left, right=right, info=left.info)
-        return left
-
-    def _parse_bit_and(self) -> Expr:
-        left = self._parse_equality()
-        while self._match(TokenType.ANDB):
-            right = self._parse_equality()
-            left = BinaryExpr(op="&", left=left, right=right, info=left.info)
-        return left
-
-    def _parse_equality(self) -> Expr:
-        left = self._parse_comparison()
-        while True:
-            if self._match(TokenType.EQ):
-                right = self._parse_comparison()
-                left = BinaryExpr(op="==", left=left, right=right, info=left.info)
-            elif self._match(TokenType.NE):
-                right = self._parse_comparison()
-                left = BinaryExpr(op="!=", left=left, right=right, info=left.info)
-            else:
-                break
-        return left
-
-    def _parse_comparison(self) -> Expr:
-        left = self._parse_shift()
-        while True:
-            if self._match(TokenType.GT):
-                right = self._parse_shift()
-                left = BinaryExpr(op=">", left=left, right=right, info=left.info)
-            elif self._match(TokenType.LT):
-                right = self._parse_shift()
-                left = BinaryExpr(op="<", left=left, right=right, info=left.info)
-            elif self._match(TokenType.GE):
-                right = self._parse_shift()
-                left = BinaryExpr(op=">=", left=left, right=right, info=left.info)
-            elif self._match(TokenType.LE):
-                right = self._parse_shift()
-                left = BinaryExpr(op="<=", left=left, right=right, info=left.info)
-            elif self._match(TokenType.IS):
-                right = self._parse_shift()
-                left = BinaryExpr(op="is", left=left, right=right, info=left.info)
-            else:
-                break
-        return left
-
-    def _parse_shift(self) -> Expr:
-        left = self._parse_additive()
-        while True:
-            if self._match(TokenType.SHIFTL):
-                right = self._parse_additive()
-                left = BinaryExpr(op="<<", left=left, right=right, info=left.info)
-            elif self._match(TokenType.SHIFTR):
-                right = self._parse_additive()
-                left = BinaryExpr(op=">>", left=left, right=right, info=left.info)
-            else:
-                break
-        return left
-
-    def _parse_additive(self) -> Expr:
-        left = self._parse_multiplicative()
-        while True:
-            if self._match(TokenType.ADD):
-                right = self._parse_multiplicative()
-                left = BinaryExpr(op="+", left=left, right=right, info=left.info)
-            elif self._match(TokenType.MINUS):
-                right = self._parse_multiplicative()
-                left = BinaryExpr(op="-", left=left, right=right, info=left.info)
-            else:
-                break
-        return left
-
-    def _parse_multiplicative(self) -> Expr:
-        left = self._parse_unary()
-        while True:
-            if self._match(TokenType.MULT):
-                right = self._parse_unary()
-                left = BinaryExpr(op="*", left=left, right=right, info=left.info)
-            elif self._match(TokenType.DIV):
-                right = self._parse_unary()
-                left = BinaryExpr(op="/", left=left, right=right, info=left.info)
-            elif self._match(TokenType.REM):
-                right = self._parse_unary()
-                left = BinaryExpr(op="%", left=left, right=right, info=left.info)
-            else:
-                break
-        return left
-
-    def _parse_unary(self) -> Expr:
-        if self._at(TokenType.PLUSPLUS, TokenType.MINUSMINUS):
-            token = self._advance()
-            target = self._parse_unary()
-            delta = 1 if token.type == TokenType.PLUSPLUS else -1
-            return IncrementExpr(
-                target=target,
-                delta=delta,
-                info=token.info,
-            )
-        if self._at(TokenType.NOTL):
-            info = self._advance().info
-            operand = self._parse_unary()
-            return UnaryExpr(op="!", operand=operand, info=info)
-        if self._at(TokenType.MINUS):
-            info = self._advance().info
-            operand = self._parse_unary()
-            return UnaryExpr(op="-", operand=operand, info=info)
-        if self._at(TokenType.NOTB):
-            info = self._advance().info
-            operand = self._parse_unary()
-            return UnaryExpr(op="~", operand=operand, info=info)
-        return self._parse_postfix()
-
-    def _parse_postfix(self) -> Expr:
-        expr = self._parse_primary()
-        while True:
-            if self._at(TokenType.LPAR):
-                expr = self._parse_call(expr)
-            elif self._at(TokenType.LBRACK):
-                expr = self._parse_index(expr)
-            elif self._at(TokenType.DOT):
-                expr = self._parse_member(expr)
-            elif self._at(TokenType.QUEST) and self._peek(1).type == TokenType.DOT:
-                self._advance()
-                self._advance()
-                member = self._literal(self._expect(TokenType.ID))
-                args: list[Expr] = []
-                has_call = False
-                if self._at(TokenType.LPAR):
-                    has_call = True
-                    self._advance()
-                    if not self._at(TokenType.RPAR):
-                        args.append(self._parse_expression())
-                        while self._match(TokenType.COMMA):
-                            args.append(self._parse_expression())
-                    self._expect(TokenType.RPAR)
-                expr = (
-                    SafeCallExpr(obj=expr, member=member, args=args, info=expr.info)
-                    if has_call
-                    else SafeMemberExpr(obj=expr, member=member, info=expr.info)
-                )
-            elif self._at(TokenType.QUEST) and self._peek(1).type != TokenType.COLON:
-                info = self._advance().info
-                expr = PropagateExpr(value=expr, info=info)
-            elif self._at(TokenType.PLUSPLUS, TokenType.MINUSMINUS) and not isinstance(
-                expr, IncrementExpr
-            ):
-                token = self._advance()
-                delta = 1 if token.type == TokenType.PLUSPLUS else -1
-                expr = IncrementExpr(
-                    target=expr,
-                    delta=delta,
-                    info=token.info,
-                )
-            else:
-                break
-        return expr
-
-    def _parse_call(self, callee: Expr) -> CallExpr:
-        self._expect(TokenType.LPAR)
-        args: list[Expr] = []
-        if not self._at(TokenType.RPAR):
-            args.append(self._parse_expression())
-            while self._match(TokenType.COMMA):
-                args.append(self._parse_expression())
-        self._expect(TokenType.RPAR)
-        return CallExpr(callee=callee, args=args, info=callee.info)
-
-    def _parse_index(self, obj: Expr) -> IndexExpr | SliceExpr:
-        info = self._cur().info
-        self._expect(TokenType.LBRACK)
-        # slice: [:end] or [start:] or [start:end]
-        start = None
-        end = None
-        if not self._at(TokenType.COLON):
-            start = self._parse_expression()
-        if self._match(TokenType.COLON):
-            if not self._at(TokenType.RBRACK):
-                end = self._parse_expression()
-            self._expect(TokenType.RBRACK)
-            return SliceExpr(obj=obj, start=start, end=end, info=info)
-        self._expect(TokenType.RBRACK)
-        if start is None:
-            self._error("Expected index expression")
-        return IndexExpr(obj=obj, index=start, info=info)
-
-    def _parse_member(self, obj: Expr) -> MemberExpr:
-        self._expect(TokenType.DOT)
-        member = self._literal(self._expect(TokenType.ID))
-        return MemberExpr(obj=obj, member=member, info=obj.info)
-
     def _parse_match_expr(self) -> PatternMatchExpr:
         info = self._cur().info
         self._expect(TokenType.MATCH)
@@ -1347,12 +1104,14 @@ class Parser:
             self._expect(TokenType.RPAR)
             return ListExpr(elements=elems, info=tok.info)
 
-        # Lambda: (params) -> { body } or (params) -> expr.
-        if self._at(TokenType.LPAR) and self._is_paren_lambda_ahead():
-            return self._parse_lambda()
-
-        if self._at(TokenType.LPAR) and self._is_tuple_literal_ahead():
-            return self._parse_tuple_literal()
+        # Lambda/tuple/grouped expressions all start with '('; classify once so
+        # the common path does not repeatedly scan the same parenthesized span.
+        if self._at(TokenType.LPAR):
+            paren_kind = self._paren_primary_kind()
+            if paren_kind == "lambda":
+                return self._parse_lambda()
+            if paren_kind == "tuple":
+                return self._parse_tuple_literal()
 
         # Identifier
         if self._at(TokenType.ID):
@@ -1369,24 +1128,7 @@ class Parser:
         self._error(f"Unexpected token {tok.type.value}")
 
     def _is_tuple_literal_ahead(self) -> bool:
-        if not self._at(TokenType.LPAR):
-            return False
-        depth = 0
-        index = self._pos
-        while index < len(self._tokens):
-            token_type = self._tokens[index].type
-            if token_type == TokenType.LPAR:
-                depth += 1
-            elif token_type == TokenType.RPAR:
-                depth -= 1
-                if depth == 0:
-                    return False
-            elif token_type == TokenType.COMMA and depth == 1:
-                return True
-            elif token_type == TokenType.EOF:
-                return False
-            index += 1
-        return False
+        return self._paren_primary_kind() == "tuple"
 
     def _parse_tuple_literal(self) -> TupleExpr:
         info = self._cur().info
@@ -1432,7 +1174,9 @@ class Parser:
             index += 1
         return None
 
-    def _parse_string_literal(self, value: str, info, *, allow_interpolation: bool = True) -> Expr:
+    def _parse_string_literal(
+        self, value: str, info: TokenInfo, *, allow_interpolation: bool = True
+    ) -> Expr:
         if not allow_interpolation:
             return StrLiteral(value=value, info=info)
 
@@ -1480,12 +1224,9 @@ class Parser:
         if not parts:
             return StrLiteral(value=value, info=info)
 
-        expr = parts[0]
-        for part in parts[1:]:
-            expr = BinaryExpr(op="+", left=expr, right=part, info=info)
-        return expr
+        return InterpolatedStringExpr(parts=tuple(parts), info=info)
 
-    def _parse_interpolation_expr(self, source: str, info) -> Expr:
+    def _parse_interpolation_expr(self, source: str, info: TokenInfo) -> Expr:
         from suma_lang.frontend.lexer.tokenizer import Tokenizer
 
         tokens = Tokenizer.tokenize(source, file_name=info.file)
@@ -1493,11 +1234,7 @@ class Parser:
         expr = parser._parse_expression()
         if not parser._at(TokenType.EOF):
             self._error("Invalid string interpolation expression")
-        return CallExpr(
-            callee=Identifier(name="to_str", info=info),
-            args=(expr,),
-            info=info,
-        )
+        return expr
 
     def _parse_lambda_params(self) -> list[tuple[str, str | None]]:
         self._expect(TokenType.LPAR)

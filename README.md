@@ -23,8 +23,11 @@ mainstream languages.
 ## Quick Start
 
 ```bash
-# Install
+# Install (pip)
 pip install -e .
+
+# Or with uv (recommended for development)
+uv sync --dev
 
 # Run directly from source
 suma run examples/hello.suma
@@ -118,16 +121,21 @@ src/
     ├── frontend/      # Lexer, parser, semantic analysis, imports
     ├── mid/           # IR generation and optimization
     ├── backend/       # Bytecode generation and serialization
-    └── runtime/       # The VM implementation
+    ├── runtime/       # The VM implementation
+    └── stdlib/        # Packaged Suma standard library
 
-stdlib/                # Standard library in Suma
 examples/              # Example programs
 tests/                 # Test suite
 ```
 
 ## Running Tests
 
+Development dependencies (pytest, hypothesis, pyright, pip-audit) live in the
+`[dependency-groups].dev` table — this is uv-native (PEP 735). If you use plain
+pip, install them by hand or switch to uv.
+
 ```bash
+uv sync --dev
 uv run pytest -q
 uv run ruff check .
 uv run pyright
@@ -147,11 +155,13 @@ mkdocs build --strict   # one-off build into ./site
 ## Command Line Options
 
 ```bash
-suma run <file>        # Compile and run
-suma compile <file>    # Just compile to .sumac
-suma execute <file>    # Run existing .sumac file
-suma -I <path>         # Add import search path
-suma --no-opt          # Disable optimizations
+suma run <file>            # Compile and run
+suma compile <file> [out]  # Just compile to .sumac (output path optional)
+suma execute <file>        # Run existing .sumac file
+suma -I <path>             # Add import search path (repeatable)
+suma --no-opt              # Disable bytecode optimization
+suma --ir                  # Use the IR-based optimization pipeline
+suma --dump-opt            # Print optimized bytecode pseudo-code to stderr
 ```
 
 `main(): Int` is treated as a process-style exit value. `0` is success and is
@@ -199,7 +209,7 @@ Import paths are searched in this order:
 4. Current working directory
 5. Project root
 6. `SUMA_STDLIB_PATHS` entries, searched left to right
-7. Built-in `stdlib/` directory fallback
+7. Built-in packaged stdlib fallback
 
 You can also import Python modules directly:
 
@@ -208,8 +218,9 @@ import "py:math"
 import "py:json"
 ```
 
-Python imports are disabled by default. Allow trusted modules explicitly with
-`SUMA_PY_IMPORTS`, for example `SUMA_PY_IMPORTS=math,json`.
+The default Python import allowlist includes `math`, `json`, and `statistics`.
+Allow additional trusted modules explicitly with `SUMA_PY_IMPORTS`, for example
+`SUMA_PY_IMPORTS=decimal,random`.
 
 `SUMA_PATH` and `SUMA_STDLIB_PATHS` both use the platform path separator:
 `:` on Unix-like systems, `;` on Windows.

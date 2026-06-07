@@ -16,11 +16,13 @@ The package exposes a small, stable surface from `suma_lang/__init__.py`:
 from suma_lang import (
     BytecodeFormatError,
     CompileOptions,
+    CompileResult,
     CompileSourceError,
     Diagnostic,
     VM,
     VMError,
     compile_source,
+    compile_source_with_diagnostics,
     create_vm,
     inject_environment,
     make_environment,
@@ -59,6 +61,7 @@ assert vm.get_global("result") == 42
 Compile source text into a `ProgramBytecode` object suitable for execution or
 serialization. Raises [`CompileSourceError`](#compilesourceerror) on syntax,
 import-resolution, or semantic-analysis failures.
+Use `compile_source_with_diagnostics` if you need non-fatal warnings.
 
 ```python
 program = suma_lang.compile_source(
@@ -66,6 +69,18 @@ program = suma_lang.compile_source(
     filename="user_script.suma",
     options=suma_lang.CompileOptions(use_ir=True, optimize=True),
 )
+```
+
+### `compile_source_with_diagnostics(source, filename="<stdin>", *, import_paths=None, options=None) -> CompileResult`
+
+Compile source text and return a [`CompileResult`](#compileresult), including
+non-fatal warnings such as implicit shadowing diagnostics.
+
+```python
+result = suma_lang.compile_source_with_diagnostics(source_text, "user_script.suma")
+for warning in result.warnings:
+    print(warning.message, warning.location)
+program = result.program
 ```
 
 ### `create_vm(source_or_program=None, *, filename, import_paths, options, environment, inject) -> VM`
@@ -142,8 +157,9 @@ options = suma_lang.CompileOptions(
 
 ### `Diagnostic`
 
-A frozen dataclass describing a single compilation error. Carried inside
-`CompileSourceError.diagnostics`.
+A frozen dataclass describing a single compiler diagnostic. Errors are carried
+inside `CompileSourceError.diagnostics`; warnings are returned by
+`CompileResult.warnings`.
 
 ```python
 @dataclass(frozen=True)
@@ -156,6 +172,17 @@ class Diagnostic:
 
 `str(diagnostic)` renders the legacy `"[Source] message"` form, so code that
 just prints diagnostics needs no changes.
+
+### `CompileResult`
+
+A frozen dataclass returned by `compile_source_with_diagnostics`.
+
+```python
+@dataclass(frozen=True)
+class CompileResult:
+    program: ProgramBytecode
+    warnings: tuple[Diagnostic, ...] = ()
+```
 
 ### `CompileSourceError`
 
@@ -217,13 +244,13 @@ print(greet("Alice"))              # "Hello, Alice!"
 ## Calling Python from Suma
 
 Suma can import Python modules and call them via the `py:` prefix.
-Host applications must allow-list the modules they expose via the
-`SUMA_PY_IMPORTS` environment variable (a comma-separated list of importable
-names).
+The default Python import allowlist includes `math`, `json`, and `statistics`.
+Host applications can expose additional trusted modules via the `SUMA_PY_IMPORTS`
+environment variable (a comma-separated list of importable names).
 
 ```python
 import os
-os.environ["SUMA_PY_IMPORTS"] = "math,statistics"
+os.environ["SUMA_PY_IMPORTS"] = "decimal,random"
 ```
 
 ```suma

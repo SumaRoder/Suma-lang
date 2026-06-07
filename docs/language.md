@@ -548,15 +548,16 @@ Search order:
 4. Current directory
 5. Project root
 6. `SUMA_STDLIB_PATHS` entries, left to right
-7. Built-in `stdlib/`
+7. Built-in packaged stdlib
 
 `SUMA_PATH` and `SUMA_STDLIB_PATHS` are path lists split with the platform
 separator: `:` on Unix-like systems, `;` on Windows.
 
 The compiler catches circular imports and reports them.
 
-Python imports stay locked down unless the host allow-lists them through
-`SUMA_PY_IMPORTS`, for example `SUMA_PY_IMPORTS=math,json`.
+The default Python import allowlist includes `math`, `json`, and `statistics`.
+Hosts can allow additional trusted modules through `SUMA_PY_IMPORTS`, for
+example `SUMA_PY_IMPORTS=decimal,random`.
 
 Only `pub` top-level declarations from imported Suma modules are visible to the
 importer. Private declarations still compile as module internals, so exported

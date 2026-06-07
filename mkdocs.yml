@@ -44,6 +44,7 @@ theme:
 nav:
   - Home: index.md
   - Language Reference: language.md
+  - Grammar: grammar.md
   - Standard Library: stdlib.md
   - Embedding from Python: embedding.md
   - Bytecode Format: bytecode.md

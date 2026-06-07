@@ -1,0 +1,65 @@
+name: Bug report
+description: Something doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. The more concrete the reproduction, the faster
+        we can fix it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what did you get?
+      placeholder: |
+        I ran `suma run foo.suma` and ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: A minimal `.suma` snippet or shell session that reproduces the issue.
+      render: shell
+      placeholder: |
+        # foo.suma
+        pub main(): Int {
+            return 0
+        }
+
+        $ suma run foo.suma
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Suma-lang version / commit
+      placeholder: "0.2.0 or commit SHA"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.13.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04, macOS 14.5, Windows 11, ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Stack traces, logs, related issues, theories.

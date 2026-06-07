@@ -15,7 +15,14 @@ from suma_lang.backend.codegen.serializer import (
 )
 from suma_lang.frontend.lexer.token_types import TokenType
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
-from suma_lang.frontend.parser.ast_nodes import ElvExpr, Identifier, NullCoalesceExpr
+from suma_lang.frontend.parser.ast_nodes import (
+    ElvExpr,
+    FunctionDecl,
+    Identifier,
+    InterpolatedStringExpr,
+    NullCoalesceExpr,
+    VarDecl,
+)
 from suma_lang.frontend.parser.parser import ParseError, Parser
 from suma_lang.frontend.semantic.analyzer import Analyzer
 from suma_lang.mid.ir.codegen import CodegenError, ir_to_bytecode
@@ -173,6 +180,39 @@ pub main(): Int {
 """
     assert _run(source) == 11
     assert _run_ir(source) == 11
+
+
+def test_string_interpolation_uses_structured_ast_and_preserves_string_context_direct_and_ir():
+    ast = _parse("""
+pub main(): Str {
+    value: Str = "{40}{2}"
+    return value
+}
+""")
+    main = ast.declarations[0]
+    assert isinstance(main, FunctionDecl)
+    value_decl = main.body.statements[0]
+    assert isinstance(value_decl, VarDecl)
+    assert isinstance(value_decl.initializer, InterpolatedStringExpr)
+
+    source = """
+pub main(): Int {
+    text: Str = "{40}{2}"
+    if text != "402" { return 0 }
+    return 42
+}
+"""
+    assert _run(source) == 42
+    assert _run_ir(source) == 42
+
+
+def test_string_interpolation_still_analyzes_embedded_expressions():
+    errors = _analyze("""
+pub main(): Str {
+    return "{missing_name}"
+}
+""")
+    assert any("Undefined name 'missing_name'" in error for error in errors)
 
 
 def test_unterminated_block_comment_reports_syntax_error():
@@ -443,6 +483,43 @@ pub main(): Int {
     assert any("private member 'value'" in error for error in errors)
 
 
+def test_analyzer_reuses_inherited_generic_member_types():
+    errors = _analyze("""
+Box<T> {
+    pub value: T
+    init(value: T) {
+        this.value = value
+    }
+
+    pub get(): T {
+        return this.value
+    }
+}
+
+Child<T>: Box<T> {
+    init(value: T) {
+        this.value = value
+    }
+
+    pub bump(extra: T): T {
+        if extra != this.value {
+            return this.get()
+        }
+        return this.value
+    }
+}
+
+pub main(): Int {
+    child: Child<Int> = Child(42)
+    first: Int = child.value
+    second: Int = child.get()
+    third: Int = child.bump(first)
+    return first + second + third
+}
+""")
+    assert errors == []
+
+
 def test_ir_recursive_call_returns_value():
     source = """
 pub fib(n: Int): Int {
@@ -483,6 +560,19 @@ pub main(): Int {
     return inc(41)
 }
 """
+    assert _run_ir(source) == 42
+
+
+def test_paren_primary_classification_handles_lambda_tuple_and_grouped_direct_and_ir():
+    source = """
+pub main(): Int {
+    inc: Function<Int, Int> = (n: Int): Int -> n + 1
+    nested = ((1, 2), 39)
+    grouped = (inc(1))
+    return grouped + nested[1] + nested[0][0]
+}
+"""
+    assert _run(source) == 42
     assert _run_ir(source) == 42
 
 

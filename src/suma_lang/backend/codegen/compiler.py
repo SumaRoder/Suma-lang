@@ -32,6 +32,7 @@ from suma_lang.frontend.parser.ast_nodes import (
     IfStmt,
     IncrementExpr,
     IndexExpr,
+    InterpolatedStringExpr,
     IntLiteral,
     ItExpr,
     LambdaExpr,
@@ -167,6 +168,9 @@ def _lambda_free_vars(expr: LambdaExpr, outer_locals: set[str]) -> set[str]:
                 node, (IntLiteral, FloatLiteral, StrLiteral, BoolLiteral, NullLiteral, ItExpr)
             ):
                 return
+            elif isinstance(node, InterpolatedStringExpr):
+                for part in node.parts:
+                    self.visit_expr(part)
             elif isinstance(node, UnaryExpr):
                 self.visit_expr(node.operand)
             elif isinstance(node, BinaryExpr):
@@ -1058,6 +1062,8 @@ class FuncContext:
             self.emit(Op.LOAD_CONST, self.compiler._const(expr.value))
         elif isinstance(expr, StrLiteral):
             self.emit(Op.LOAD_CONST, self.compiler._string_const(expr.value))
+        elif isinstance(expr, InterpolatedStringExpr):
+            self._compile_interpolated_string(expr)
         elif isinstance(expr, BoolLiteral):
             self.emit(Op.LOAD_TRUE if expr.value else Op.LOAD_FALSE)
         elif isinstance(expr, NullLiteral):
@@ -1375,6 +1381,17 @@ class FuncContext:
             ">>": Op.SHR,
         }
         self.emit(op_map[expr.op])
+
+    def _compile_interpolated_string(self, expr: InterpolatedStringExpr) -> None:
+        if expr.parts and isinstance(expr.parts[0], StrLiteral):
+            self.compile_expr(expr.parts[0])
+            start = 1
+        else:
+            self.emit(Op.LOAD_CONST, self.compiler._string_const(""))
+            start = 0
+        for part in expr.parts[start:]:
+            self.compile_expr(part)
+            self.emit(Op.ADD)
 
     def _compile_compound_assign(self, expr: CompoundAssignExpr) -> None:
         op_map = {"+=": Op.ADD, "-=": Op.SUB, "*=": Op.MUL, "/=": Op.DIV, "%=": Op.MOD}

@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest a new language feature, stdlib addition, or tooling improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suma-lang is intentionally aggressive about cutting low-value syntax.
+        New features need to justify their weight.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Concrete example of code that's painful today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Syntax, semantics, and how it interacts with existing features.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Why is the proposal better than the workarounds?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Language syntax / semantics
+        - Standard library
+        - Compiler (frontend / mid / backend)
+        - Runtime / VM
+        - CLI / tooling
+        - Documentation
+    validations:
+      required: true

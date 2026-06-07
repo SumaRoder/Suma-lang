@@ -175,7 +175,7 @@ class SumaCallable:
             callback = namespace["callback"]
         else:
 
-            def callback_any(*args):
+            def callback_any(*args: Any) -> Any:
                 return self._invoke(list(args))
 
             callback = callback_any

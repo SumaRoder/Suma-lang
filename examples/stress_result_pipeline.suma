@@ -18,19 +18,19 @@ pub parse_three(a: Str, b: Str, c: Str) {
     dc: R = parse_digit(c)
 
     match da {
-        Err {
+        Err => {
             return Err(it)
         }
         Ok => print("first digit = " + to_str(it))
     }
     match db {
-        Err {
+        Err => {
             return Err(it)
         }
         Ok => print("second digit = " + to_str(it))
     }
     match dc {
-        Err {
+        Err => {
             return Err(it)
         }
         Ok => print("third digit = " + to_str(it))
@@ -52,7 +52,7 @@ pub safe_divide(a: Int, b: Int) {
 pub pipeline(a: Str, b: Str, c: Str, divisor: Int) {
     parsed: R = parse_three(a, b, c)
     match parsed {
-        Err {
+        Err => {
             return Err("parse failed: " + it)
         }
         Ok => print("parsed number = " + to_str(it))
@@ -61,7 +61,7 @@ pub pipeline(a: Str, b: Str, c: Str, divisor: Int) {
     n: Int = unwrap(parsed)
     divided: R = safe_divide(n, divisor)
     match divided {
-        Err {
+        Err => {
             return Err("division failed: " + it)
         }
         Ok => print("division result = " + to_str(it))

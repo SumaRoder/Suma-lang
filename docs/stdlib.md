@@ -1,6 +1,7 @@
 # Suma-lang Standard Library
 
-The stdlib lives in the `stdlib/` directory. Import modules with `import "module_name"`.
+The stdlib ships inside the `suma_lang` package. Import modules with
+`import "module_name"`.
 
 ## Built-in Functions
 
@@ -35,7 +36,7 @@ These come with the compiler, no import needed.
 
 ## core.suma
 
-Located at `stdlib/core.suma`.
+Packaged as `suma_lang/stdlib/core.suma`.
 
 Some useful utilities for working with integers and validation.
 
@@ -63,7 +64,7 @@ match result {
 
 ## math.suma
 
-Located at `stdlib/math.suma`.
+Packaged as `suma_lang/stdlib/math.suma`.
 
 Basic math operations for integers.
 
@@ -81,7 +82,7 @@ Basic math operations for integers.
 
 ## list.suma
 
-Located at `stdlib/list.suma`.
+Packaged as `suma_lang/stdlib/list.suma`.
 
 Working with lists.
 
@@ -97,7 +98,7 @@ Working with lists.
 
 ## json.suma
 
-Located at `stdlib/json.suma`.
+Packaged as `suma_lang/stdlib/json.suma`.
 
 JSON serialization and parsing.
 
@@ -129,6 +130,16 @@ obj.keys()         // List("name", "age")
 ```
 
 `JsonObject` stores string values. Use typed conversion helpers before inserting non-string data.
+
+### Free-function wrappers
+
+The module also exposes two free functions that delegate to the corresponding
+methods so you can pass a `JsonObject` through pipelines without binding it to a
+local first:
+
+- `json_get(obj: JsonObject, key: Str): Str` — equivalent to `obj.get(key)`.
+- `json_set(obj: JsonObject, key: Str, value: Str): JsonObject` — calls
+  `obj.put(key, value)` and returns `obj` so you can chain calls.
 
 ## Putting It Together
 

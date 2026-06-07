@@ -49,6 +49,7 @@ Thumbs.db
 .tmp/
 .claude/
 AGENTS.md
+export-*.md
 
 # Ruff
 .ruff_cache/

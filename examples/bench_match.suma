@@ -1,0 +1,24 @@
+pub classify(n: Int): Int {
+    match n {
+        0 => { return 100 }
+        1 => { return 101 }
+        2 => { return 102 }
+        3 => { return 103 }
+        4 => { return 104 }
+        5 => { return 105 }
+        6 => { return 106 }
+        7 => { return 107 }
+        8 => { return 108 }
+        9 => { return 109 }
+        _ => { return 999 }
+    }
+    return 0
+}
+
+pub main(): Int {
+    total: Int = 0
+    for i in 0..200 {
+        @total = total + classify(i % 11)
+    }
+    return total
+}

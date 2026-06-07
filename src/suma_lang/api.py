@@ -7,19 +7,21 @@ This module is the canonical home for `compile_source`, `create_vm`,
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from suma_lang.backend.codegen.compiler import Compiler
+from suma_lang.backend.codegen.compiler import CompileError, Compiler
 from suma_lang.backend.codegen.opcodes import ProgramBytecode
 from suma_lang.backend.codegen.optimizer import format_program, optimize
+from suma_lang.backend.codegen.serializer import BytecodeFormatError
 from suma_lang.frontend.imports import ImportResolveError, ImportResolver
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
 from suma_lang.frontend.parser.parser import Parser
 from suma_lang.frontend.semantic.analyzer import Analyzer
-from suma_lang.mid.ir.codegen import ir_to_bytecode
-from suma_lang.mid.ir.lower import lower_to_ir
+from suma_lang.mid.ir.codegen import CodegenError, ir_to_bytecode
+from suma_lang.mid.ir.lower import LowerError, lower_to_ir
 from suma_lang.mid.ir.optimizer import optimize_ir
 from suma_lang.runtime.vm.vm import VM
 
@@ -76,13 +78,58 @@ def _default_compile_options() -> CompileOptions:
     return CompileOptions()
 
 
+_ANALYZER_LOCATION_RE = re.compile(r"^.*:(\d+):(\d+): ")
+
+
+def _analyzer_diagnostic(message: str, *, level: DiagnosticLevel = "error") -> Diagnostic:
+    location: tuple[int, int] | None = None
+    match = _ANALYZER_LOCATION_RE.match(message)
+    if match:
+        line_text, column_text = match.groups()
+        if line_text.isdigit() and column_text.isdigit():
+            line = int(line_text)
+            column = int(column_text)
+            if line > 0 and column > 0:
+                location = (line, column)
+    return Diagnostic(message=message, source="Analyzer", level=level, location=location)
+
+
+@dataclass(frozen=True)
+class CompileResult:
+    """Result bundle: bytecode plus any non-fatal compiler diagnostics."""
+
+    program: ProgramBytecode
+    warnings: tuple[Diagnostic, ...] = ()
+
+
 def compile_source(
     source: str,
     filename: str = "<stdin>",
     import_paths: list[str] | None = None,
     options: CompileOptions | None = None,
 ) -> ProgramBytecode:
-    """Compile source code to bytecode program."""
+    """Compile source code to bytecode program.
+
+    For access to non-fatal warnings (e.g. implicit shadowing), call
+    :func:`compile_source_with_diagnostics` instead.
+    """
+    return compile_source_with_diagnostics(
+        source, filename, import_paths=import_paths, options=options
+    ).program
+
+
+def compile_source_with_diagnostics(
+    source: str,
+    filename: str = "<stdin>",
+    *,
+    import_paths: list[str] | None = None,
+    options: CompileOptions | None = None,
+) -> CompileResult:
+    """Compile source and return both bytecode and non-fatal warnings.
+
+    Errors still raise :class:`CompileSourceError`; warnings are returned in
+    ``CompileResult.warnings`` so callers (CLI, LSP, embedders) can render them.
+    """
     active_options = options or _default_compile_options()
     if import_paths is not None:
         active_options = replace(active_options, import_paths=tuple(import_paths))
@@ -102,27 +149,37 @@ def compile_source(
     analyzer = Analyzer()
     errors = analyzer.analyze(ast)
     if errors:
-        raise CompileSourceError([Diagnostic(str(err), source="Analyzer") for err in errors])
+        raise CompileSourceError([_analyzer_diagnostic(str(err)) for err in errors])
+    warnings = tuple(_analyzer_diagnostic(msg, level="warning") for msg in analyzer.warnings)
 
-    if active_options.use_ir:
-        # IR pipeline: AST → IR → optimize IR → bytecode
-        ir_prog = lower_to_ir(ast)
-        if active_options.optimize:
-            ir_prog = optimize_ir(ir_prog)
-        prog = ir_to_bytecode(ir_prog)
-        if active_options.optimize:
-            prog = optimize(prog)
-    else:
-        # Direct pipeline: AST → bytecode → optimize bytecode
-        compiler = Compiler()
-        prog = compiler.compile(ast)
-        if active_options.optimize:
-            prog = optimize(prog)
+    try:
+        if active_options.use_ir:
+            # IR pipeline: AST → IR → optimize IR → bytecode
+            ir_prog = lower_to_ir(ast)
+            if active_options.optimize:
+                ir_prog = optimize_ir(ir_prog)
+            prog = ir_to_bytecode(ir_prog)
+            if active_options.optimize:
+                prog = optimize(prog)
+        else:
+            # Direct pipeline: AST → bytecode → optimize bytecode
+            compiler = Compiler()
+            prog = compiler.compile(ast)
+            if active_options.optimize:
+                prog = optimize(prog)
+    except LowerError as err:
+        raise CompileSourceError([Diagnostic(str(err), source="IR")]) from err
+    except CodegenError as err:
+        raise CompileSourceError([Diagnostic(str(err), source="Codegen")]) from err
+    except CompileError as err:
+        raise CompileSourceError([Diagnostic(str(err), source="Compiler")]) from err
+    except BytecodeFormatError as err:
+        raise CompileSourceError([Diagnostic(str(err), source="Bytecode")]) from err
 
     if active_options.dump_opt:
         print(format_program(prog), file=sys.stderr)
 
-    return prog
+    return CompileResult(program=prog, warnings=warnings)
 
 
 def create_vm(

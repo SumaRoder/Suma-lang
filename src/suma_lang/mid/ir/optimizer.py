@@ -9,7 +9,67 @@ Applies optimization passes on the IR:
 
 from __future__ import annotations
 
-from . import *
+from .ir import (
+    Add,
+    And,
+    BasicBlock,
+    BitAnd,
+    BitNot,
+    BitOr,
+    BitXor,
+    Branch,
+    BranchFalse,
+    Call,
+    CallGlobal,
+    Div,
+    Eq,
+    Ge,
+    Gt,
+    Immediate,
+    IRFunction,
+    IRInstr,
+    IRProgram,
+    IsErr,
+    IsOk,
+    Jump,
+    Le,
+    LoadConst,
+    LoadGlobal,
+    LoadIndex,
+    LoadIt,
+    LoadMember,
+    LoadSlice,
+    LoadThis,
+    LoadVar,
+    Lt,
+    MakeErr,
+    MakeLambda,
+    MakeList,
+    MakeObject,
+    MakeOk,
+    MakeRange,
+    MakeTuple,
+    Mod,
+    Mul,
+    Ne,
+    Neg,
+    Not,
+    Operand,
+    Or,
+    Pop,
+    Print,
+    Return,
+    SetIt,
+    Shl,
+    Shr,
+    StoreGlobal,
+    StoreIndex,
+    StoreMember,
+    StoreVar,
+    Sub,
+    UnwrapOk,
+    VirtualReg,
+)
 
 _BINARY_INSTRS = (
     Add,
@@ -75,11 +135,6 @@ _PURE_DEST_INSTRS = (
     *_BINARY_INSTRS,
     *_UNARY_INSTRS,
 )
-
-
-def _is_constant(op: Operand) -> bool:
-    """Check if an operand is an immediate constant."""
-    return isinstance(op, Immediate)
 
 
 def _get_constant(op: Operand) -> object | None:

@@ -1,3 +1,5 @@
+# pyright: strict
+
 from .char_stream import CharStream
 from .error_handler import ErrorHandler
 from .token_types import Token, TokenInfo, TokenType
@@ -45,7 +47,7 @@ class Tokenizer:
         cs: CharStream, info: TokenInfo, quote: str, *, raw: bool = False, multiline: bool = False
     ) -> str:
         closed = False
-        chars = []
+        chars: list[str] = []
 
         while cs.has_next():
             ch = cs.next()

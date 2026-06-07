@@ -7,9 +7,128 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from suma_lang.frontend.parser.ast_nodes import *
+from suma_lang.frontend.parser.ast_nodes import (
+    AssignExpr,
+    BinaryExpr,
+    BlockStmt,
+    BoolLiteral,
+    BreakStmt,
+    CallExpr,
+    ClassDecl,
+    CompoundAssignExpr,
+    ContinueStmt,
+    DestructureAssignStmt,
+    DestructureDeclStmt,
+    ElvExpr,
+    EnumDecl,
+    ErrExpr,
+    Expr,
+    ExprStmt,
+    FloatLiteral,
+    ForInStmt,
+    FunctionDecl,
+    GetterDecl,
+    Identifier,
+    IfExpr,
+    IfStmt,
+    IncrementExpr,
+    IndexExpr,
+    InterpolatedStringExpr,
+    IntLiteral,
+    ItExpr,
+    LambdaExpr,
+    ListExpr,
+    LoopStmt,
+    MemberExpr,
+    NullCoalesceExpr,
+    NullLiteral,
+    OkExpr,
+    OuterIdentifier,
+    Param,
+    PatternMatchExpr,
+    Program,
+    PropagateExpr,
+    RangeExpr,
+    ReturnStmt,
+    SafeCallExpr,
+    SafeMemberExpr,
+    SetterDecl,
+    SliceExpr,
+    Stmt,
+    StrLiteral,
+    ThisExpr,
+    ThrowStmt,
+    TryCatchStmt,
+    TupleExpr,
+    UnaryExpr,
+    VarDecl,
+    WhileStmt,
+)
 
-from . import *
+from .ir import (
+    Add,
+    And,
+    BasicBlock,
+    BitAnd,
+    BitNot,
+    BitOr,
+    BitXor,
+    Branch,
+    BranchFalse,
+    Call,
+    CallGlobal,
+    Div,
+    Eq,
+    Ge,
+    Gt,
+    Immediate,
+    IRFunction,
+    IRInstr,
+    IRProgram,
+    IRType,
+    IsEnumVariant,
+    IsErr,
+    IsOk,
+    Jump,
+    Label,
+    Le,
+    LoadConst,
+    LoadGlobal,
+    LoadIndex,
+    LoadIt,
+    LoadMember,
+    LoadSlice,
+    LoadThis,
+    LoadVar,
+    Lt,
+    MakeEnum,
+    MakeErr,
+    MakeLambda,
+    MakeList,
+    MakeObject,
+    MakeOk,
+    MakeRange,
+    MakeTuple,
+    Mod,
+    Mul,
+    Ne,
+    Neg,
+    Not,
+    Operand,
+    Or,
+    Pop,
+    Return,
+    SetIt,
+    Shl,
+    Shr,
+    StoreGlobal,
+    StoreIndex,
+    StoreMember,
+    StoreVar,
+    Sub,
+    UnwrapOk,
+    VirtualReg,
+)
 
 
 class LowerError(Exception):
@@ -716,6 +835,8 @@ class FuncLowering:
             dest = self.builder.new_reg("s", IRType.STR)
             self.builder.emit(LoadConst(dest=dest, value=expr.value))
             return dest
+        elif isinstance(expr, InterpolatedStringExpr):
+            return self._lower_interpolated_string(expr)
         elif isinstance(expr, BoolLiteral):
             dest = self.builder.new_reg("b", IRType.BOOL)
             self.builder.emit(LoadConst(dest=dest, value=expr.value))
@@ -951,6 +1072,21 @@ class FuncLowering:
         if cls:
             self.builder.emit(cls(dest=dest, left=left, right=right))
         return dest
+
+    def _lower_interpolated_string(self, expr: InterpolatedStringExpr) -> Operand:
+        if expr.parts and isinstance(expr.parts[0], StrLiteral):
+            result = self._lower_expr(expr.parts[0])
+            start = 1
+        else:
+            result = self.builder.new_reg("interp", IRType.STR)
+            self.builder.emit(LoadConst(dest=result, value=""))
+            start = 0
+        for part in expr.parts[start:]:
+            right = self._lower_expr(part)
+            dest = self.builder.new_reg("interp", IRType.STR)
+            self.builder.emit(Add(dest=dest, left=result, right=right))
+            result = dest
+        return result
 
     def _lower_logical(self, expr: BinaryExpr) -> Operand:
         left = self._lower_expr(expr.left)

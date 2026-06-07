@@ -27,6 +27,12 @@ class StrLiteral:
 
 
 @dataclass(frozen=True)
+class InterpolatedStringExpr:
+    parts: Sequence[Expr]
+    info: TokenInfo
+
+
+@dataclass(frozen=True)
 class BoolLiteral:
     value: bool
     info: TokenInfo
@@ -248,6 +254,7 @@ Expr = (
     IntLiteral
     | FloatLiteral
     | StrLiteral
+    | InterpolatedStringExpr
     | BoolLiteral
     | NullLiteral
     | Identifier

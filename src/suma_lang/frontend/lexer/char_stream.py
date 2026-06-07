@@ -1,3 +1,6 @@
+# pyright: strict
+
+
 class CharStream:
     def __init__(self, src: str) -> None:
         self._src = src

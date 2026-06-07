@@ -96,7 +96,7 @@ class ImportResolver:
                     if not is_python_import_allowed(module_name):
                         raise ImportResolveError(
                             f"Python import '{module_name}' is not allowed; "
-                            "set SUMA_PY_IMPORTS to allow trusted modules"
+                            "use a default-allowed module or set SUMA_PY_IMPORTS"
                         )
                     py_imports[alias] = module_name
                     continue
@@ -180,16 +180,17 @@ def _default_import_paths() -> list[str]:
 
 def _source_tree_root() -> Path | None:
     candidate = Path(__file__).resolve().parents[4]
-    if (candidate / "pyproject.toml").is_file() and (candidate / "stdlib").is_dir():
+    if (candidate / "pyproject.toml").is_file():
         return candidate
     return None
 
 
 def _stdlib_import_paths(project_root: Path | None) -> list[str]:
+    # The stdlib ships inside the package at src/suma_lang/stdlib; that path
+    # resolves correctly for both editable installs and wheel installs via
+    # __file__.parents[2]. SUMA_STDLIB_PATHS lets users override or extend it.
     configured = _env_path_list("SUMA_STDLIB_PATHS")
     paths = [*configured]
-    if project_root is not None:
-        paths.append(str(project_root / "stdlib"))
     package_stdlib = Path(__file__).resolve().parents[2] / "stdlib"
     if package_stdlib.is_dir():
         paths.append(str(package_stdlib))
@@ -648,6 +649,11 @@ def _rewrite_expr(
             elements=tuple(
                 _rewrite_expr(elem, mapping, bound, type_bound) for elem in expr.elements
             ),
+        )
+    if isinstance(expr, ast.InterpolatedStringExpr):
+        return replace(
+            expr,
+            parts=tuple(_rewrite_expr(part, mapping, bound, type_bound) for part in expr.parts),
         )
     if isinstance(expr, ast.OkExpr | ast.ErrExpr):
         return replace(expr, value=_rewrite_expr(expr.value, mapping, bound, type_bound))

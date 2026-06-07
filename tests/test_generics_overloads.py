@@ -6,8 +6,11 @@ from suma_lang.backend.codegen.serializer import deserialize, serialize
 from suma_lang.frontend.lexer.tokenizer import Tokenizer
 from suma_lang.frontend.parser.parser import Parser
 from suma_lang.frontend.semantic.analyzer import Analyzer
+from suma_lang.frontend.semantic.types import ERROR_TYPE, substitute_type
 from suma_lang.mid.ir.codegen import ir_to_bytecode
 from suma_lang.mid.ir.lower import lower_to_ir
+from suma_lang.runtime.vm.overloads import score_overload_arg
+from suma_lang.runtime.vm.values import SumaErr, SumaOk
 from suma_lang.runtime.vm.vm import VM
 
 
@@ -39,6 +42,21 @@ def _run_pipeline(source: str, *, use_ir: bool, optimize: bool):
         options=CompileOptions(use_ir=use_ir, optimize=optimize),
     )
     return VM(program).run()
+
+
+def test_substitute_type_uses_mapping_content_not_dict_identity():
+    type_name = "R<Box<T>,Pair<U>>"
+    first = substitute_type(type_name, {"T": "Int", "U": "Str"})
+    second = substitute_type(type_name, {"U": "Str", "T": "Int"})
+
+    assert first == "R<Box<Int>,Pair<Str>>"
+    assert second == first
+    assert substitute_type("Box<T>", {"T": None}) == f"Box<{ERROR_TYPE}>"
+
+
+def test_runtime_overload_accepts_legacy_result_type_spelling():
+    assert score_overload_arg("Result<Int,Str>", SumaOk(1), [], {}) == 2
+    assert score_overload_arg("Result<Int,Str>", SumaErr("bad"), [], {}) == 2
 
 
 @pytest.mark.parametrize("use_ir", [False, True])

@@ -109,6 +109,27 @@ pub main(): Int {
     _run_cli([], capsys=capsys, source_path=source_path, expected="ok")
 
 
+def test_cli_run_emits_analyzer_warnings(tmp_path, capsys):
+    source_path = tmp_path / "shadow.suma"
+    source_path.write_text("""
+pub main(): Int {
+    total: Int = 0
+    if true {
+        total = 9
+    }
+    return total
+}
+""")
+
+    cli.main(["run", str(source_path)])
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    assert "warning: [Analyzer]" in captured.err
+    assert "shadows outer binding" in captured.err
+    assert str(source_path) in captured.err
+
+
 def test_cli_compile_then_execute_round_trip(tmp_path, capsys):
     source_path = tmp_path / "main.suma"
     output_path = tmp_path / "artifact.sumac"

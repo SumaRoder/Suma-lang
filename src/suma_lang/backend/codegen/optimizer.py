@@ -91,6 +91,26 @@ _OP_CODE_TO_NAME = {
 }
 
 _INPLACE_OPS = frozenset({Op.ADD, Op.SUB, Op.MUL, Op.DIV, Op.MOD})
+_STACK_BINARY_OPS = frozenset(
+    {
+        Op.ADD,
+        Op.SUB,
+        Op.MUL,
+        Op.DIV,
+        Op.MOD,
+        Op.BIT_AND,
+        Op.BIT_OR,
+        Op.BIT_XOR,
+        Op.SHL,
+        Op.SHR,
+        Op.EQ,
+        Op.NE,
+        Op.GT,
+        Op.LT,
+        Op.GE,
+        Op.LE,
+    }
+)
 
 
 @dataclass
@@ -268,6 +288,45 @@ def _remap_jumps(instrs: list[Instr]) -> list[Instr]:
                 instr.args = (*instr.args[:3], old_to_new[target])
 
     return instrs
+
+
+def _thread_jumps(instrs: list[Instr]) -> list[Instr]:
+    """Redirect jumps that target an unconditional jump trampoline."""
+    if not instrs:
+        return instrs
+
+    offset_map = _build_offset_map(instrs)
+
+    def resolve(target: int) -> int:
+        seen: set[int] = set()
+        while target not in seen:
+            seen.add(target)
+            target_index = offset_map.get(target)
+            if target_index is None:
+                break
+            target_instr = instrs[target_index]
+            if target_instr.op == Op.JUMP and target_instr.arg is not None:
+                target = target_instr.arg
+                continue
+            break
+        return target
+
+    changed = False
+    for instr in instrs:
+        if instr.op in (Op.JUMP, Op.JUMP_IF_FALSE, Op.JUMP_IF_TRUE):
+            if instr.arg is None:
+                continue
+            target = resolve(instr.arg)
+            if target != instr.arg:
+                instr.arg = target
+                changed = True
+        elif instr.op in (Op.JUMP_IF_VAR_CMP, Op.JUMP_IF_VAR_CONST_CMP) and instr.args:
+            target = resolve(instr.args[3])
+            if target != instr.args[3]:
+                instr.args = (*instr.args[:3], target)
+                changed = True
+
+    return instrs if changed else instrs
 
 
 # Optimization passes
@@ -906,11 +965,256 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
     """Fuse common stack bytecode sequences into VM superinstructions."""
     result: list[Instr] = []
     jump_targets = _find_jump_targets(instrs)
+    slot_stores = _count_slot_stores(instrs)
+    slot_reads = _count_slot_reads(instrs)
     changed = False
     i = 0
 
     while i < len(instrs):
         instr = instrs[i]
+
+        # IR spill shape for direct-call arguments:
+        # LOAD a; STORE t1; POP; LOAD b; STORE t2; POP;
+        # LOAD t1; LOAD t2; CALL_GLOBAL nargs
+        if instr.op in (Op.LOAD_VAR, Op.LOAD_CONST) and instr.arg is not None:
+            sources: list[Instr] = []
+            temps: list[int] = []
+            j = i
+            while (
+                j + 2 < len(instrs)
+                and instrs[j].op in (Op.LOAD_VAR, Op.LOAD_CONST)
+                and instrs[j].arg is not None
+                and instrs[j + 1].op == Op.STORE_VAR
+                and instrs[j + 1].arg is not None
+                and instrs[j + 2].op == Op.POP
+            ):
+                sources.append(instrs[j])
+                temps.append(_arg(instrs[j + 1]))
+                j += 3
+            if sources and j + len(temps) < len(instrs):
+                call_index = j + len(temps)
+                call_instr = instrs[call_index]
+                arg_loads = instrs[j:call_index]
+                args_match = True
+                temps_single_use = True
+                for offset, temp in enumerate(temps):
+                    arg_load = arg_loads[offset]
+                    source = sources[offset]
+                    const_reload = (
+                        source.op == Op.LOAD_CONST
+                        and arg_load.op == Op.LOAD_CONST
+                        and arg_load.arg == source.arg
+                    )
+                    var_reload = arg_load.op == Op.LOAD_VAR and arg_load.arg == temp
+                    if not (var_reload or const_reload):
+                        args_match = False
+                        break
+                    read_count = slot_reads.get(temp, 0)
+                    if slot_stores.get(temp) != 1 or read_count != (1 if var_reload else 0):
+                        temps_single_use = False
+                        break
+
+                if (
+                    call_instr.op == Op.CALL_GLOBAL
+                    and call_instr.arg is not None
+                    and (call_instr.arg >> 16) == len(temps)
+                    and args_match
+                    and not _has_jump_target(instrs, jump_targets, i + 1, call_index - i)
+                    and temps_single_use
+                ):
+                    result.extend((*sources, call_instr))
+                    i = call_index + 1
+                    changed = True
+                    continue
+
+        # IR spill shape:
+        # LOAD_VAR dst; STORE_VAR t1; POP; LOAD_VAR rhs; STORE_VAR t2; POP;
+        # LOAD_VAR t1; LOAD_VAR t2; BINOP; STORE_VAR dst; POP
+        if (
+            i + 10 < len(instrs)
+            and instr.op == Op.LOAD_VAR
+            and instr.arg is not None
+            and instrs[i + 1].op == Op.STORE_VAR
+            and instrs[i + 1].arg is not None
+            and instrs[i + 2].op == Op.POP
+            and instrs[i + 3].op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instrs[i + 3].arg is not None
+            and instrs[i + 4].op == Op.STORE_VAR
+            and instrs[i + 4].arg is not None
+            and instrs[i + 5].op == Op.POP
+            and instrs[i + 6].op == Op.LOAD_VAR
+            and instrs[i + 6].arg == instrs[i + 1].arg
+            and instrs[i + 7].op == Op.LOAD_VAR
+            and instrs[i + 7].arg == instrs[i + 4].arg
+            and instrs[i + 8].op in _INPLACE_OPS
+            and instrs[i + 9].op == Op.STORE_VAR
+            and instrs[i + 9].arg == instr.arg
+            and instrs[i + 10].op == Op.POP
+            and not _has_jump_target(instrs, jump_targets, i + 1, 10)
+        ):
+            left_temp = _arg(instrs[i + 1])
+            right_temp = _arg(instrs[i + 4])
+            if (
+                slot_stores.get(left_temp) == 1
+                and slot_stores.get(right_temp) == 1
+                and slot_reads.get(left_temp) == 1
+                and slot_reads.get(right_temp) == 1
+            ):
+                if instrs[i + 3].op == Op.LOAD_VAR:
+                    result.append(
+                        Instr(
+                            op=Op.INPLACE_VAR_VAR,
+                            arg=_arg(instr),
+                            args=(_arg(instr), _arg(instrs[i + 3]), int(instrs[i + 8].op)),
+                            orig_idx=instr.orig_idx,
+                        )
+                    )
+                else:
+                    result.append(
+                        Instr(
+                            op=Op.INPLACE_VAR_CONST,
+                            arg=_arg(instr),
+                            args=(_arg(instr), _arg(instrs[i + 3]), int(instrs[i + 8].op)),
+                            orig_idx=instr.orig_idx,
+                        )
+                    )
+                i += 11
+                changed = True
+                continue
+
+        # IR spill shape for a plain binary expression assigned to a slot:
+        # LOAD a; STORE t1; POP; LOAD b; STORE t2; POP;
+        # LOAD t1; LOAD t2; BINOP; STORE dst; POP
+        if (
+            i + 10 < len(instrs)
+            and instr.op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instr.arg is not None
+            and instrs[i + 1].op == Op.STORE_VAR
+            and instrs[i + 1].arg is not None
+            and instrs[i + 2].op == Op.POP
+            and instrs[i + 3].op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instrs[i + 3].arg is not None
+            and instrs[i + 4].op == Op.STORE_VAR
+            and instrs[i + 4].arg is not None
+            and instrs[i + 5].op == Op.POP
+            and instrs[i + 6].op == Op.LOAD_VAR
+            and instrs[i + 6].arg == instrs[i + 1].arg
+            and instrs[i + 7].op == Op.LOAD_VAR
+            and instrs[i + 7].arg == instrs[i + 4].arg
+            and instrs[i + 8].op in _STACK_BINARY_OPS
+            and instrs[i + 9].op == Op.STORE_VAR
+            and instrs[i + 9].arg is not None
+            and instrs[i + 10].op == Op.POP
+            and not _has_jump_target(instrs, jump_targets, i + 1, 10)
+        ):
+            left_temp = _arg(instrs[i + 1])
+            right_temp = _arg(instrs[i + 4])
+            if (
+                slot_stores.get(left_temp) == 1
+                and slot_stores.get(right_temp) == 1
+                and slot_reads.get(left_temp) == 1
+                and slot_reads.get(right_temp) == 1
+            ):
+                result.extend(
+                    (
+                        instr,
+                        instrs[i + 3],
+                        instrs[i + 8],
+                        instrs[i + 9],
+                        instrs[i + 10],
+                    )
+                )
+                i += 11
+                changed = True
+                continue
+
+        # IR spill shape for a plain binary expression returned directly:
+        # LOAD a; STORE t1; POP; LOAD b; STORE t2; POP;
+        # LOAD t1; LOAD t2; BINOP; RETURN
+        if (
+            i + 9 < len(instrs)
+            and instr.op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instr.arg is not None
+            and instrs[i + 1].op == Op.STORE_VAR
+            and instrs[i + 1].arg is not None
+            and instrs[i + 2].op == Op.POP
+            and instrs[i + 3].op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instrs[i + 3].arg is not None
+            and instrs[i + 4].op == Op.STORE_VAR
+            and instrs[i + 4].arg is not None
+            and instrs[i + 5].op == Op.POP
+            and instrs[i + 6].op == Op.LOAD_VAR
+            and instrs[i + 6].arg == instrs[i + 1].arg
+            and instrs[i + 7].op == Op.LOAD_VAR
+            and instrs[i + 7].arg == instrs[i + 4].arg
+            and instrs[i + 8].op in _STACK_BINARY_OPS
+            and instrs[i + 9].op == Op.RETURN
+            and not _has_jump_target(instrs, jump_targets, i + 1, 9)
+        ):
+            left_temp = _arg(instrs[i + 1])
+            right_temp = _arg(instrs[i + 4])
+            if (
+                slot_stores.get(left_temp) == 1
+                and slot_stores.get(right_temp) == 1
+                and slot_reads.get(left_temp) == 1
+                and slot_reads.get(right_temp) == 1
+            ):
+                result.extend((instr, instrs[i + 3], instrs[i + 8], instrs[i + 9]))
+                i += 10
+                changed = True
+                continue
+
+        # IR spill shape feeding a fused comparison jump:
+        # LOAD_VAR a; STORE_VAR t1; POP; LOAD_VAR/CONST b; STORE_VAR t2; POP;
+        # JUMP_IF_VAR_CMP t1, t2, cmp, target
+        if (
+            i + 6 < len(instrs)
+            and instr.op == Op.LOAD_VAR
+            and instr.arg is not None
+            and instrs[i + 1].op == Op.STORE_VAR
+            and instrs[i + 1].arg is not None
+            and instrs[i + 2].op == Op.POP
+            and instrs[i + 3].op in (Op.LOAD_VAR, Op.LOAD_CONST)
+            and instrs[i + 3].arg is not None
+            and instrs[i + 4].op == Op.STORE_VAR
+            and instrs[i + 4].arg is not None
+            and instrs[i + 5].op == Op.POP
+            and instrs[i + 6].op == Op.JUMP_IF_VAR_CMP
+            and instrs[i + 6].args
+            and instrs[i + 6].args[0] == instrs[i + 1].arg
+            and instrs[i + 6].args[1] == instrs[i + 4].arg
+            and not _has_jump_target(instrs, jump_targets, i + 1, 6)
+        ):
+            left_temp = _arg(instrs[i + 1])
+            right_temp = _arg(instrs[i + 4])
+            if (
+                slot_stores.get(left_temp) == 1
+                and slot_stores.get(right_temp) == 1
+                and slot_reads.get(left_temp) == 1
+                and slot_reads.get(right_temp) == 1
+            ):
+                _, _, cmp_code, target = instrs[i + 6].args
+                if instrs[i + 3].op == Op.LOAD_VAR:
+                    result.append(
+                        Instr(
+                            op=Op.JUMP_IF_VAR_CMP,
+                            arg=_arg(instr),
+                            args=(_arg(instr), _arg(instrs[i + 3]), cmp_code, target),
+                            orig_idx=instr.orig_idx,
+                        )
+                    )
+                else:
+                    result.append(
+                        Instr(
+                            op=Op.JUMP_IF_VAR_CONST_CMP,
+                            arg=_arg(instr),
+                            args=(_arg(instr), _arg(instrs[i + 3]), cmp_code, target),
+                            orig_idx=instr.orig_idx,
+                        )
+                    )
+                i += 7
+                changed = True
+                continue
 
         # JUMP_IF_VAR_CMP body; JUMP exit; INPLACE_* body...; JUMP loop
         if (
@@ -1086,6 +1390,36 @@ def _superinstructions(instrs: list[Instr]) -> list[Instr]:
     return result if changed else instrs
 
 
+def _count_slot_stores(instrs: list[Instr]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for instr in instrs:
+        if instr.op == Op.STORE_VAR and instr.arg is not None:
+            counts[instr.arg] = counts.get(instr.arg, 0) + 1
+    return counts
+
+
+def _count_slot_reads(instrs: list[Instr]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+
+    def add(slot: int) -> None:
+        counts[slot] = counts.get(slot, 0) + 1
+
+    for instr in instrs:
+        if instr.op == Op.LOAD_VAR and instr.arg is not None:
+            add(instr.arg)
+        elif instr.op == Op.JUMP_IF_VAR_CMP and instr.args:
+            add(instr.args[0])
+            add(instr.args[1])
+        elif instr.op == Op.JUMP_IF_VAR_CONST_CMP and instr.args:
+            add(instr.args[0])
+        elif instr.op == Op.INPLACE_VAR_VAR and instr.args:
+            add(instr.args[0])
+            add(instr.args[1])
+        elif instr.op == Op.INPLACE_VAR_CONST and instr.args:
+            add(instr.args[0])
+    return counts
+
+
 def _tail_calls(instrs: list[Instr], func_idx: int) -> list[Instr]:
     """Replace self calls immediately returned by the caller with frame-reusing tail calls."""
     if func_idx < 0:
@@ -1159,6 +1493,9 @@ class Optimizer:
                 # rewrites for that legacy mixed representation.
                 instrs = _constant_fold(instrs, constants_for_passes)
                 instrs = _peephole(instrs, constants_for_passes)
+
+            # Jump threading exposes dead trampoline blocks before DCE.
+            instrs = _thread_jumps(instrs)
 
             # Dead code elimination
             instrs = _eliminate_dead_code(instrs)

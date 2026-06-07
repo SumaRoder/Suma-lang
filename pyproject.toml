@@ -1,6 +1,6 @@
 [project]
 name = "suma-lang"
-version = "0.1.0"
+version = "0.2.0"
 description = "A statically-typed programming language with Result-based error handling"
 readme = "README.md"
 license = "Apache-2.0"
@@ -52,18 +52,27 @@ packages = ["src/suma_lang"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
-    "/stdlib",
     "/tests",
     "/examples",
     "/docs",
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+# Benchmarks are skipped from the default suite — they're slow (fib(30) alone
+# is ~17s) and have their own CI job that runs them with measurements. To run
+# them locally, pass `--benchmark-enable --benchmark-only`.
+addopts = "--benchmark-skip"
+markers = [
+    "benchmark: marks a benchmark test (run via the `benchmarks` CI job)",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -75,15 +84,18 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/suma_lang/mid/ir/__init__.py" = ["F401", "F403", "I001"]
-"src/suma_lang/mid/ir/codegen.py" = ["F403", "F405"]
-"src/suma_lang/mid/ir/lower.py" = ["F403", "F405"]
-"src/suma_lang/mid/ir/optimizer.py" = ["F403", "F405"]
 
 [tool.pyright]
 include = ["src", "main.py"]
 typeCheckingMode = "standard"
 reportMissingTypeStubs = "none"
 reportUnsupportedDunderAll = "none"
+# Selectively enable strict-mode rules that we've already cleaned up.
+# The remaining strict-only checks (Unknown* family, PrivateUsage) fire >800
+# warnings; they're tracked as future work but are not gated today.
+reportUnnecessaryComparison = "error"
+reportMissingParameterType = "error"
+reportUnusedFunction = "error"
 
 [dependency-groups]
 dev = [
@@ -91,5 +103,6 @@ dev = [
     "pyright>=1.1.0",
     "pytest>=9.0.3",
     "pytest-cov>=5.0.0",
+    "pytest-benchmark>=5.0",
     "pip-audit>=2.0"
 ]

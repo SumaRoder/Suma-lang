@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [py-main]
+    branches: ["**"]
   pull_request:
     branches: [py-main]
 
@@ -40,11 +40,14 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        # Run pyright on both ends of the supported Python range so that
+        # typing/match-statement behavior differences between 3.10 and 3.13
+        # are caught by CI.
+        if: matrix.os == 'ubuntu-latest' && (matrix.python-version == '3.10' || matrix.python-version == '3.13')
         run: uv run pyright
 
       - name: Test
-        run: uv run pytest -q --cov=suma_lang --cov-report=xml --cov-report=term
+        run: uv run pytest -q --cov=suma_lang --cov-report=xml --cov-report=term --cov-fail-under=80
 
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
@@ -58,6 +61,92 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv build
 
+      - name: Check package metadata
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: uvx twine check dist/*
+
+      - name: Smoke test wheel
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: |
+          SMOKE_DIR="${RUNNER_TEMP:-/tmp}/suma-wheel-smoke"
+          python -m venv "$SMOKE_DIR"
+          "$SMOKE_DIR/bin/python" -m pip install dist/*.whl
+          "$SMOKE_DIR/bin/suma" run examples/hello.suma
+          "$SMOKE_DIR/bin/suma" compile examples/hello.suma "$SMOKE_DIR/hello.sumac"
+          "$SMOKE_DIR/bin/suma" execute "$SMOKE_DIR/hello.sumac"
+          "$SMOKE_DIR/bin/python" - <<'PY'
+          import suma_lang
+
+          source = """
+          import "core"
+
+          pub main(): Int {
+              return max_int(40, 42)
+          }
+          """
+          assert suma_lang.run_source(source) == 42
+          PY
+
+      - name: Smoke test sdist
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: |
+          SMOKE_DIR="${RUNNER_TEMP:-/tmp}/suma-sdist-smoke"
+          python -m venv "$SMOKE_DIR"
+          "$SMOKE_DIR/bin/python" -m pip install dist/*.tar.gz
+          "$SMOKE_DIR/bin/suma" run examples/hello.suma
+          "$SMOKE_DIR/bin/python" - <<'PY'
+          import suma_lang
+
+          source = """
+          import "core"
+
+          pub main(): Int {
+              return min_int(42, 99)
+          }
+          """
+          assert suma_lang.run_source(source) == 42
+          PY
+
       - name: Security audit
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         run: uv run pip-audit --desc
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    # Run benchmarks on py-main pushes and on PRs that touch performance-sensitive
+    # code. They take ~2 minutes, so they're not part of the per-Python-version
+    # matrix.
+    needs: checks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run benchmarks
+        run: |
+          uv run pytest tests/test_benchmarks.py \
+            --benchmark-enable \
+            --benchmark-only \
+            --benchmark-json=benchmark.json \
+            --benchmark-columns=min,mean,median,stddev,ops \
+            --benchmark-sort=name \
+            -p no:cov
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark.json
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,18 @@
+pub make_adder(delta: Int): Function {
+    return (x: Int): Int -> { return x + delta }
+}
+
+pub apply(f: Function, x: Int): Int {
+    return f(x)
+}
+
+pub main(): Int {
+    add1: Function = make_adder(1)
+    add2: Function = make_adder(2)
+    add3: Function = make_adder(3)
+    total: Int = 0
+    for i in 0..200 {
+        @total = total + apply(add1, i) + apply(add2, i) + apply(add3, i)
+    }
+    return total
+}

@@ -473,6 +473,106 @@ def test_optimizer_fuses_var_compare_jump():
     assert any(instr.op == Op.JUMP_IF_VAR_CONST_CMP for instr in instrs)
 
 
+def test_optimizer_elides_ir_binary_spill_temps():
+    code = [
+        int(Op.LOAD_VAR),
+        0,
+        int(Op.STORE_VAR),
+        10,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        1,
+        int(Op.STORE_VAR),
+        11,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        10,
+        int(Op.LOAD_VAR),
+        11,
+        int(Op.MOD),
+        int(Op.STORE_VAR),
+        2,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        2,
+        int(Op.LOAD_VAR),
+        2,
+        int(Op.ADD),
+        int(Op.RETURN),
+    ]
+    fn = Function(name="main", arity=2, code=code, locals_count=12)
+
+    optimize(_make_prog(fn))
+
+    instrs = decode(fn.code)
+    assert len(fn.code) < len(code)
+    assert all(instr.arg not in (10, 11) for instr in instrs if instr.arg is not None)
+    assert any(instr.op == Op.MOD for instr in instrs)
+
+
+def test_optimizer_elides_ir_binary_spill_temps_before_return():
+    code = [
+        int(Op.LOAD_VAR),
+        0,
+        int(Op.STORE_VAR),
+        10,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        1,
+        int(Op.STORE_VAR),
+        11,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        10,
+        int(Op.LOAD_VAR),
+        11,
+        int(Op.MOD),
+        int(Op.RETURN),
+    ]
+    fn = Function(name="main", arity=2, code=code, locals_count=12)
+
+    optimize(_make_prog(fn))
+
+    instrs = decode(fn.code)
+    assert [instr.op for instr in instrs] == [Op.LOAD_VAR, Op.LOAD_VAR, Op.MOD, Op.RETURN]
+    assert [instr.arg for instr in instrs[:2]] == [0, 1]
+
+
+def test_optimizer_elides_ir_call_arg_spill_temps():
+    call_arg = (2 << 16) | 3
+    code = [
+        int(Op.LOAD_VAR),
+        0,
+        int(Op.STORE_VAR),
+        10,
+        int(Op.POP),
+        int(Op.LOAD_CONST),
+        0,
+        int(Op.STORE_VAR),
+        11,
+        int(Op.POP),
+        int(Op.LOAD_VAR),
+        10,
+        int(Op.LOAD_VAR),
+        11,
+        int(Op.CALL_GLOBAL),
+        call_arg,
+        int(Op.RETURN),
+    ]
+    fn = Function(name="main", arity=1, code=code, constants=[2], locals_count=12)
+
+    optimize(_make_prog(fn))
+
+    instrs = decode(fn.code)
+    assert [instr.op for instr in instrs] == [
+        Op.LOAD_VAR,
+        Op.LOAD_CONST,
+        Op.CALL_GLOBAL,
+        Op.RETURN,
+    ]
+    assert instrs[2].arg == call_arg
+
+
 def test_optimizer_fuses_counting_loop_and_preserves_result():
     from suma_lang.cli import compile_source
     from suma_lang.runtime.vm.vm import VM
@@ -499,6 +599,41 @@ pub main(): Int {
 
     assert any(instr.op == Op.LOOP_GENERIC for instr in instrs)
     assert VM(program).run() == 120
+
+
+def test_optimizer_fuses_ir_spill_shape_into_counting_loop():
+    from suma_lang.api import CompileOptions, compile_source
+    from suma_lang.runtime.vm.vm import VM
+
+    source = """
+pub sum_to(n: Int): Int {
+    total: Int = 0
+    i: Int = 1
+    loop {
+        if (i > n) { break }
+        @total += i
+        @i += 1
+    }
+    return total
+}
+
+pub main(): Int {
+    return sum_to(10)
+}
+"""
+    direct_program = compile_source(source, "<direct-loop>")
+    ir_program = compile_source(
+        source,
+        "<ir-loop>",
+        options=CompileOptions(use_ir=True),
+    )
+    direct_fn = next(fn for fn in direct_program.functions if fn.name == "sum_to")
+    ir_fn = next(fn for fn in ir_program.functions if fn.name == "sum_to")
+    ir_instrs = decode(ir_fn.code)
+
+    assert any(instr.op == Op.LOOP_GENERIC for instr in ir_instrs)
+    assert len(ir_fn.code) <= len(direct_fn.code) + 2
+    assert VM(ir_program).run() == 55
 
 
 def test_range_for_lowering_avoids_range_object_direct_and_ir():

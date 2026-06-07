@@ -12,8 +12,10 @@ import sys
 
 from suma_lang.api import (
     CompileOptions,
+    CompileResult,
     CompileSourceError,
     compile_source,
+    compile_source_with_diagnostics,
     create_vm,
     inject_environment,
     make_environment,
@@ -25,8 +27,10 @@ from suma_lang.runtime.vm.vm import VM, VMError
 
 __all__ = [
     "CompileOptions",
+    "CompileResult",
     "CompileSourceError",
     "compile_source",
+    "compile_source_with_diagnostics",
     "create_vm",
     "inject_environment",
     "make_environment",
@@ -39,6 +43,11 @@ __all__ = [
 ]
 
 
+def _emit_warnings(result: CompileResult) -> None:
+    for diag in result.warnings:
+        print(f"warning: {diag}", file=sys.stderr)
+
+
 def cmd_compile(
     input_path: str, output_path: str | None = None, options: CompileOptions | None = None
 ) -> None:
@@ -46,8 +55,9 @@ def cmd_compile(
     with open(input_path, encoding="utf-8") as f:
         source = f.read()
 
-    prog = compile_source(source, input_path, options=options)
-    data = serialize(prog)
+    result = compile_source_with_diagnostics(source, input_path, options=options)
+    _emit_warnings(result)
+    data = serialize(result.program)
 
     if output_path is None:
         base = os.path.splitext(input_path)[0]
@@ -75,10 +85,11 @@ def cmd_build_and_run(input_path: str, options: CompileOptions | None = None) ->
     with open(input_path, encoding="utf-8") as f:
         source = f.read()
 
-    prog = compile_source(source, input_path, options=options)
-    result = VM(prog).run()
-    if result is not None and result != 0:
-        print(result)
+    result = compile_source_with_diagnostics(source, input_path, options=options)
+    _emit_warnings(result)
+    vm_result = VM(result.program).run()
+    if vm_result is not None and vm_result != 0:
+        print(vm_result)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

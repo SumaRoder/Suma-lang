@@ -24,6 +24,8 @@ from suma_lang.runtime.vm.values import (
     _py_repr,
 )
 
+__all__ = ["_format_value", "_to_str_fast"]
+
 _isinstance = isinstance
 
 

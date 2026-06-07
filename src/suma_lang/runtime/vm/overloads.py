@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from suma_lang.backend.codegen.opcodes import Function
+from suma_lang.frontend.semantic.types import base_type
 from suma_lang.runtime.vm.errors import VMError
 from suma_lang.runtime.vm.values import (
     SumaCallable,
@@ -27,12 +28,6 @@ from suma_lang.runtime.vm.values import (
     SumaRange,
     SumaTuple,
 )
-
-
-def base_type(type_name: str | None) -> str | None:
-    if type_name is None or "<" not in type_name:
-        return type_name
-    return type_name.split("<", 1)[0]
 
 
 def runtime_type_name(value: Any) -> str:

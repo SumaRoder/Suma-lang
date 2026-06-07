@@ -1,9 +1,12 @@
-"""Pure type-name string helpers used by the semantic analyzer.
+"""Type-name string helpers used by the semantic analyzer.
 
-These functions all operate on the textual representation of types
-(``"R<Int, Str>"``, ``"Function<Int,Str,Bool>"``, ``"List<Int>"`` and so on)
-and have no dependency on the rest of the analyzer state, which is why they
-live here rather than as methods on :class:`Analyzer`.
+These functions operate on the textual representation of types
+(``"R<Int, Str>"``, ``"Function<Int,Str,Bool>"``, ``"List<Int>"``) for
+backwards compatibility with the rest of the analyzer and runtime.
+Internally they delegate to :mod:`type_repr`, which carries a structured
+:class:`Type` ADT — new code should prefer the ADT form directly because
+it is hashable, pattern-matchable, and free of whitespace/normalization
+quirks. The string layer will stay until the analyzer migration completes.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from collections.abc import Sequence
 from functools import lru_cache
 
 from suma_lang.frontend.parser.ast_nodes import Param
+from suma_lang.frontend.semantic.type_repr import Type, format_type, parse_type
 
 ERROR_TYPE = "<error>"
 
@@ -46,12 +50,8 @@ def nullable_inner_type(type_name: str | None) -> str | None:
 
 @lru_cache(maxsize=8192)
 def base_type(type_name: str | None) -> str | None:
-    type_name = normalize_type_name(type_name)
-    if type_name is None:
-        return None
-    if "<" not in type_name:
-        return type_name
-    return type_name.split("<", 1)[0]
+    parsed = parse_type(normalize_type_name(type_name))
+    return parsed.base if parsed is not None else None
 
 
 def split_type_args(type_name: str | None) -> list[str]:
@@ -60,24 +60,10 @@ def split_type_args(type_name: str | None) -> list[str]:
 
 @lru_cache(maxsize=8192)
 def _split_type_args_tuple(type_name: str | None) -> tuple[str, ...]:
-    type_name = normalize_type_name(type_name)
-    if type_name is None or "<" not in type_name or not type_name.endswith(">"):
+    parsed = parse_type(normalize_type_name(type_name))
+    if parsed is None or not parsed.args:
         return ()
-    inner = type_name[type_name.index("<") + 1 : -1]
-    args: list[str] = []
-    depth = 0
-    start = 0
-    for index, char in enumerate(inner):
-        if char == "<":
-            depth += 1
-        elif char == ">":
-            depth -= 1
-        elif char == "," and depth == 0:
-            args.append(inner[start:index])
-            start = index + 1
-    if inner:
-        args.append(inner[start:])
-    return tuple(args)
+    return tuple(str(a) for a in parsed.args)
 
 
 @lru_cache(maxsize=8192)
@@ -149,14 +135,34 @@ def is_error_type(type_name: str | None) -> bool:
 
 
 def substitute_type(type_name: str | None, mapping: dict[str, str | None]) -> str | None:
-    type_name = normalize_type_name(type_name)
-    if type_name is None:
+    if not mapping:
+        return normalize_type_name(type_name)
+    return _substitute_type_cached(type_name, tuple(sorted(mapping.items())))
+
+
+@lru_cache(maxsize=8192)
+def _substitute_type_cached(
+    type_name: str | None, mapping_items: tuple[tuple[str, str | None], ...]
+) -> str | None:
+    parsed = parse_type(normalize_type_name(type_name))
+    if parsed is None:
         return None
-    if type_name in mapping:
-        return mapping[type_name] if mapping[type_name] is not None else ERROR_TYPE
-    args = split_type_args(type_name)
-    if not args:
-        return type_name
-    base = base_type(type_name) or type_name
-    substituted = [substitute_type(arg, mapping) or arg for arg in args]
-    return f"{base}<{','.join(substituted)}>"
+    mapping = dict(mapping_items)
+    result = _substitute_node(parsed, mapping)
+    return format_type(result)
+
+
+def _substitute_node(node: Type, mapping: dict[str, str | None]) -> Type:
+    # When the entire node matches a binding key (e.g. type-param "T"),
+    # swap the whole subtree out so generic parameters substitute correctly.
+    key = str(node)
+    if key in mapping:
+        replacement = mapping[key]
+        if replacement is None:
+            return Type(ERROR_TYPE)
+        parsed = parse_type(replacement)
+        return parsed if parsed is not None else Type(ERROR_TYPE)
+    if not node.args:
+        return node
+    new_args = tuple(_substitute_node(arg, mapping) for arg in node.args)
+    return Type(node.base, new_args)
